@@ -139,6 +139,23 @@ table.tabela-notas th, table.tabela-notas td { padding: 8px 10px; border-bottom:
 table.tabela-notas th { background: var(--cinza-fundo); }
 table.tabela-notas td:first-child, table.tabela-notas th:first-child { text-align: left; }
 
+/* Cabeçalho de resultado (tela de revisão / PDF) */
+.cabecalho-resultado { border: 1px solid var(--cinza-borda); }
+.cabecalho-resultado-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 8px; }
+.cabecalho-resultado-grid small { display: block; color: var(--cinza-texto); font-size: 0.75rem; }
+.cabecalho-resultado-grid strong { font-size: 0.95rem; }
+
+/* Grade de cards (Escolas / Turmas) — estilo do app antigo */
+.grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-top: 14px; }
+.card-quadrado {
+  background: var(--branco); border-radius: var(--raio); box-shadow: var(--sombra);
+  padding: 20px 16px; display: flex; flex-direction: column; gap: 8px; min-height: 150px;
+}
+.card-quadrado h4 { margin: 0; font-size: 1.05rem; }
+.card-quadrado-info { margin: 0; color: var(--cinza-texto); font-size: 0.85rem; line-height: 1.5; flex: 1; }
+.card-quadrado-acoes { display: flex; gap: 6px; }
+.card-quadrado-acoes .btn-primario { flex: 1; }
+
 /* Guia de classificação */
 .guia-conteudo h3 { margin-top: 0; }
 .guia-conteudo h4 { margin-top: 26px; color: var(--azul); }
