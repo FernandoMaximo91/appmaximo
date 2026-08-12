@@ -1,94 +1,39 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>AppMaximo - Sistema de Avaliações</title>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#2563eb">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="styles.css">
-</head>
-<body>
+// api.js
+// Única porta de comunicação com o backend. Content-Type text/plain evita que o
+// navegador dispare um preflight de CORS, que o Apps Script não responde.
+const Api = (function () {
+  function token() { return localStorage.getItem('appmaximo_token') || ''; }
+  function setToken(t) { if (t) localStorage.setItem('appmaximo_token', t); }
+  function limparToken() { localStorage.removeItem('appmaximo_token'); }
 
-<div id="loading" class="loading-overlay hidden"><div class="spinner"></div></div>
-<div id="toast-container"></div>
+  async function chamar(action, dados) {
+    if (!API_URL || API_URL.indexOf('COLE_AQUI') !== -1) {
+      throw new Error('O endereço do backend ainda não foi configurado em js/config.js.');
+    }
+    let resp;
+    try {
+      resp = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action, token: token(), dados: dados || {} })
+      });
+    } catch (e) {
+      throw new Error('Não foi possível falar com o servidor. Verifique sua internet.');
+    }
+    let corpo;
+    try { corpo = await resp.json(); } catch (e) {
+      throw new Error('Resposta inesperada do servidor.');
+    }
+    if (!corpo.success) {
+      if (['SESSAO_INVALIDA', 'SESSAO_EXPIRADA', 'SEM_TOKEN'].includes(corpo.code)) {
+        limparToken();
+      }
+      const erro = new Error(corpo.error || 'Erro desconhecido.');
+      erro.code = corpo.code;
+      throw erro;
+    }
+    return corpo.data;
+  }
 
-<header id="app-header" class="hidden">
-  <div class="header-inner">
-    <span class="logo">📘 AppMaximo</span>
-    <div id="header-info"></div>
-    <button id="btn-logout" class="btn-icon" title="Sair">🚪</button>
-  </div>
-</header>
-
-<main id="app-main">
-
-  <!-- ===== LOGIN ===== -->
-  <section id="view-login" class="view">
-    <div class="login-card">
-      <h1>📘 AppMaximo</h1>
-      <p class="subtitulo">Sistema de Avaliações</p>
-
-      <div id="login-selecao" class="login-selecao">
-        <button class="card-opcao" data-tipo="professor">👨‍🏫<span>Professor</span></button>
-        <button class="card-opcao" data-tipo="aluno">🎓<span>Aluno</span></button>
-      </div>
-
-      <form id="form-login" class="hidden">
-        <h3 id="login-titulo"></h3>
-        <label>Usuário</label>
-        <input type="text" id="login-user" autocomplete="username" required>
-        <label>Senha</label>
-        <input type="password" id="login-pass" autocomplete="current-password" required>
-        <button type="submit" class="btn btn-primario btn-full">Entrar</button>
-        <button type="button" id="btn-voltar-login" class="btn btn-texto btn-full">Voltar</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- ===== ALUNO ===== -->
-  <section id="view-aluno" class="view hidden">
-    <nav class="tabs" id="tabs-aluno">
-      <button data-tab="pendentes" class="tab-ativa">Pendentes</button>
-      <button data-tab="concluidas">Concluídas</button>
-      <button data-tab="redacoes">Redação</button>
-      <button data-tab="extra">Atividade Extra</button>
-    </nav>
-    <div id="aluno-conteudo" class="conteudo"></div>
-  </section>
-
-  <!-- ===== PROVA (ALUNO RESPONDENDO) ===== -->
-  <section id="view-prova" class="view hidden">
-    <div id="prova-cronometro" class="cronometro hidden"></div>
-    <div id="prova-conteudo" class="conteudo"></div>
-  </section>
-
-  <!-- ===== PROFESSOR ===== -->
-  <section id="view-professor" class="view hidden">
-    <nav class="tabs" id="tabs-professor">
-      <button data-tab="turmas" class="tab-ativa">Turmas</button>
-      <button data-tab="questoes">Banco de Questões</button>
-      <button data-tab="notas">Notas</button>
-      <button data-tab="diagnostico">Diagnóstico</button>
-      <button data-tab="guia">📖 Guia</button>
-      <button data-tab="admin" id="tab-admin-btn" class="hidden">Admin</button>
-    </nav>
-    <div id="professor-conteudo" class="conteudo"></div>
-  </section>
-
-</main>
-
-<div id="modal-overlay" class="modal-overlay hidden">
-  <div id="modal-box" class="modal-box"></div>
-</div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="js/config.js"></script>
-<script src="js/api.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/questoes-ui.js"></script>
-<script src="js/app.js"></script>
-</body>
-</html>
+  return { chamar, token, setToken, limparToken };
+})();

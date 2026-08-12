@@ -33,31 +33,19 @@ function ligarEventosLogin() {
   document.getElementById('btn-voltar-login').addEventListener('click', () => {
     document.getElementById('login-selecao').classList.remove('hidden');
     document.getElementById('form-login').classList.add('hidden');
-    document.getElementById('alerta-sessao-duplicada').classList.add('hidden');
   });
-  document.getElementById('btn-cancelar-login').addEventListener('click', () => {
-    document.getElementById('alerta-sessao-duplicada').classList.add('hidden');
-  });
-  document.getElementById('btn-forcar-login').addEventListener('click', () => submeterLogin(true));
   document.getElementById('form-login').addEventListener('submit', (e) => {
     e.preventDefault();
-    submeterLogin(false);
+    submeterLogin();
   });
 }
 
-async function submeterLogin(forcar) {
+async function submeterLogin() {
   const user = document.getElementById('login-user').value.trim();
   const pass = document.getElementById('login-pass').value;
   if (!user || !pass) { toast('Preencha usuário e senha.', 'erro'); return; }
 
   try {
-    if (!forcar) {
-      const check = await chamarComLoading('auth.verificarSessaoAtiva', { usuario: user, token: '' });
-      if (check.ativa) {
-        document.getElementById('alerta-sessao-duplicada').classList.remove('hidden');
-        return;
-      }
-    }
     const resultado = await chamarComLoading('auth.login', { user, pass, tipo: sessaoLocal.tipoLogin });
     Api.setToken(resultado.token);
     sessaoLocal = {
@@ -65,7 +53,6 @@ async function submeterLogin(forcar) {
       nivel: resultado.usuario.nivel || null
     };
     localStorage.setItem('appmaximo_perfil', JSON.stringify(sessaoLocal));
-    document.getElementById('alerta-sessao-duplicada').classList.add('hidden');
     entrarNoPainel();
   } catch (e) { /* erro já mostrado via toast */ }
 }
@@ -181,15 +168,17 @@ async function renderAlunoRedacoes() {
 async function renderAlunoAtividadeExtra() {
   const el = document.getElementById('aluno-conteudo');
   el.innerHTML = `<div class="card" style="text-align:center;">
-    <p>Gere uma atividade extra com 3 questões, feita pela IA, mirando os pontos onde você mais errou recentemente.</p>
+    <p>Gere uma atividade extra com 3 questões, feita pela IA, sempre que quiser praticar. Se você tiver erros recentes, ela foca neles; senão, é uma revisão geral.</p>
     <button class="btn btn-primario" onclick="gerarAtividadeExtra()">✨ Gerar atividade extra</button>
     <div id="atividade-extra-resultado"></div>
   </div>`;
 }
 
-async function gerarAtividadeExtra() {
+/** componenteEscolhido só é usado quando o aluno ainda não tem NENHUM histórico de provas (aluno novo). */
+async function gerarAtividadeExtra(componenteEscolhido) {
+  if (componenteEscolhido === '') { toast('Escolha um componente pra continuar.', 'erro'); return; }
   try {
-    const dados = await chamarComLoading('ia.gerarAtividadeComplementar', {});
+    const dados = await chamarComLoading('ia.gerarAtividadeComplementar', componenteEscolhido ? { componente: componenteEscolhido } : {});
     window._atividadeExtraAtual = dados;
     const html = dados.questoes.map((q, i) => `
       <div class="questao-box">
@@ -202,7 +191,16 @@ async function gerarAtividadeExtra() {
       </div>`).join('');
     document.getElementById('atividade-extra-resultado').innerHTML = html +
       `<button class="btn btn-sucesso btn-full" onclick="corrigirAtividadeExtra()">Corrigir</button>`;
-  } catch (e) { /* toast já mostrado */ }
+  } catch (e) {
+    if (e.code === 'ESCOLHA_COMPONENTE') {
+      await carregarComponentes();
+      document.getElementById('atividade-extra-resultado').innerHTML = `
+        <p style="font-size:0.85rem;color:var(--cinza-texto);">Você ainda não tem histórico de provas — escolha um componente pra praticar:</p>
+        ${renderSelectComponente('select-componente-extra', '')}
+        <button class="btn btn-primario btn-full" style="margin-top:8px;" onclick="gerarAtividadeExtra(document.getElementById('select-componente-extra').value)">Gerar</button>`;
+    }
+    /* outros erros já mostrados via toast */
+  }
 }
 
 async function corrigirAtividadeExtra() {
@@ -768,6 +766,7 @@ function _htmlRevisaoRedacao(redacao, alunoId, sugestao, redacaoId) {
     ? [{ chave: 'c1', nome: 'Domínio da norma culta' }, { chave: 'c2', nome: 'Compreensão do tema' }, { chave: 'c3', nome: 'Organização de argumentos' }, { chave: 'c4', nome: 'Mecanismos linguísticos' }, { chave: 'c5', nome: 'Proposta de intervenção' }]
     : redacao.criteriosCustom;
   return `${sugestao ? '<div class="alerta alerta-info">Sugestão da IA — revise antes de confirmar</div>' : '<p style="font-size:0.85rem;color:var(--cinza-texto);">Preencha a nota de cada critério manualmente (ou peça uma sugestão da IA acima).</p>'}
+    ${sugestao && sugestao.avisoTextoCurto ? `<div class="alerta alerta-atencao">⚠️ ${escapeHtml(sugestao.avisoTextoCurto)}</div>` : ''}
     ${criterios.map(c => {
       const sug = (sugestao && (sugestao.competencias || []).find(s => s.chave === c.chave)) || {};
       return `<label>${escapeHtml(c.nome)}${sug.comentario ? ' — <small>' + escapeHtml(sug.comentario) + '</small>' : ''}</label>
