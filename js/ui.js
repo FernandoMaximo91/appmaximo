@@ -41,9 +41,25 @@ function fecharModal() {
   document.getElementById('modal-overlay').classList.add('hidden');
   document.getElementById('modal-box').innerHTML = '';
 }
+
+/** Segundo modal, empilhado por cima do primeiro — usado pra abrir a visualização completa
+ * de uma questão (ou outra tela secundária) sem perder o formulário que já estava aberto
+ * no modal principal (ex: seleção de questões da Nova Lista). */
+function abrirModal2(htmlConteudo) {
+  document.getElementById('modal-box-2').innerHTML = htmlConteudo;
+  document.getElementById('modal-overlay-2').classList.remove('hidden');
+}
+function fecharModal2() {
+  document.getElementById('modal-overlay-2').classList.add('hidden');
+  document.getElementById('modal-box-2').innerHTML = '';
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('modal-overlay').addEventListener('click', (e) => {
     if (e.target.id === 'modal-overlay') fecharModal();
+  });
+  document.getElementById('modal-overlay-2').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-2') fecharModal2();
   });
 });
 
