@@ -145,6 +145,17 @@ table.tabela-notas td:first-child, table.tabela-notas th:first-child { text-alig
 .cabecalho-resultado-grid small { display: block; color: var(--cinza-texto); font-size: 0.75rem; }
 .cabecalho-resultado-grid strong { font-size: 0.95rem; }
 
+/* Menu recolhível (ex: lista de alunos dentro da turma) */
+details.card { padding: 0; }
+details.card > summary {
+  padding: 16px; cursor: pointer; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px;
+}
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::before { content: '▶'; font-size: 0.7rem; color: var(--cinza-texto); transition: transform 0.15s; }
+details.card[open] > summary::before { transform: rotate(90deg); }
+details.card > *:not(summary) { padding: 0 16px; }
+details.card > button:last-child, details.card > *:not(summary):last-child { padding-bottom: 16px; }
+
 /* Grade de cards (Escolas / Turmas) — estilo do app antigo */
 .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-top: 14px; }
 .card-quadrado {
