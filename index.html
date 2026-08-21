@@ -1,3 +1,35 @@
+
+Cloud
+/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Index · HTML
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -11,10 +43,10 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-
+ 
 <div id="loading" class="loading-overlay hidden"><div class="spinner"></div></div>
 <div id="toast-container"></div>
-
+ 
 <header id="app-header" class="hidden">
   <div class="header-inner">
     <span class="logo">📘 AppMaximo</span>
@@ -22,20 +54,20 @@
     <button id="btn-logout" class="btn-icon" title="Sair">🚪</button>
   </div>
 </header>
-
+ 
 <main id="app-main">
-
+ 
   <!-- ===== LOGIN ===== -->
   <section id="view-login" class="view">
     <div class="login-card">
       <h1>📘 AppMaximo</h1>
       <p class="subtitulo">Sistema de Avaliações</p>
-
+ 
       <div id="login-selecao" class="login-selecao">
         <button class="card-opcao" data-tipo="professor">👨‍🏫<span>Professor</span></button>
         <button class="card-opcao" data-tipo="aluno">🎓<span>Aluno</span></button>
       </div>
-
+ 
       <form id="form-login" class="hidden" action="javascript:void(0);">
         <h3 id="login-titulo"></h3>
         <label>Usuário</label>
@@ -47,7 +79,7 @@
       </form>
     </div>
   </section>
-
+ 
   <!-- ===== ALUNO ===== -->
   <section id="view-aluno" class="view hidden">
     <nav class="tabs" id="tabs-aluno">
@@ -58,13 +90,13 @@
     </nav>
     <div id="aluno-conteudo" class="conteudo"></div>
   </section>
-
+ 
   <!-- ===== PROVA (ALUNO RESPONDENDO) ===== -->
   <section id="view-prova" class="view hidden">
     <div id="prova-cronometro" class="cronometro hidden"></div>
     <div id="prova-conteudo" class="conteudo"></div>
   </section>
-
+ 
   <!-- ===== PROFESSOR ===== -->
   <section id="view-professor" class="view hidden">
     <nav class="tabs" id="tabs-professor">
@@ -77,13 +109,20 @@
     </nav>
     <div id="professor-conteudo" class="conteudo"></div>
   </section>
-
+ 
 </main>
-
+ 
 <div id="modal-overlay" class="modal-overlay hidden">
   <div id="modal-box" class="modal-box"></div>
 </div>
-
+ 
+<!-- Segundo modal, empilhado por cima do primeiro (ex: "visualizar questão completa" aberto
+     de dentro do modal de Nova Lista) — não reaproveita o modal-overlay principal pra não
+     perder o estado/formulário que já estava aberto nele. -->
+<div id="modal-overlay-2" class="modal-overlay hidden" style="z-index:150;">
+  <div id="modal-box-2" class="modal-box"></div>
+</div>
+ 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="js/config.js"></script>
 <script src="js/api.js"></script>
@@ -92,3 +131,6 @@
 <script src="js/app.js"></script>
 </body>
 </html>
+ 
+
+
