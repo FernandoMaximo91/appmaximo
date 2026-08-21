@@ -246,7 +246,7 @@ function _cabecalhoResultado(dados) {
     <div class="cabecalho-resultado-grid">
       <div><small>Aluno</small><strong>${escapeHtml(sessaoLocal.nome)}</strong></div>
       <div><small>Data</small><strong>${_formatarDataHora(r && r.enviadoEm)}</strong></div>
-      <div><small>Tempo gasto</small><strong>${_formatarDuracao(r && r.duracaoSegundos)}</strong></div>
+      ${dados.lista.cronometroMin ? `<div><small>Tempo gasto</small><strong>${_formatarDuracao(r && r.duracaoSegundos)}</strong></div>` : ''}
       <div><small>Acertos</small><strong>${r ? `${r.acertos} de ${r.total}` : '—'}</strong></div>
     </div>
   </div>`;
@@ -473,35 +473,37 @@ async function excluirTurma(escolaId, turmaId, nome) {
 async function abrirTurma(escolaId, turmaId) {
   turmaAtualDetalhe = await chamarComLoading('turmas.detalhes', { turmaId });
   turmaAtualDetalhe._escolaId = escolaId;
+  const acesso = turmaAtualDetalhe._acesso || { total: true };
   const el = document.getElementById('professor-conteudo');
   el.innerHTML = `
     <button class="btn btn-texto" onclick="abrirEscola('${escolaId}')">← Voltar</button>
-    <h3>${escapeHtml(turmaAtualDetalhe.nome)}</h3>
-    <div class="card">
-      <h4>Alunos (${turmaAtualDetalhe.alunos.length})</h4>
+    <h3>${escapeHtml(turmaAtualDetalhe.nome)}
+      ${!acesso.total ? `<span class="badge badge-info" style="vertical-align:middle;">Acesso: ${escapeHtml((acesso.componentes || []).join(', '))}</span>` : ''}
+    </h3>
+
+    <details class="card">
+      <summary>Alunos (${turmaAtualDetalhe.alunos.length})</summary>
       ${turmaAtualDetalhe.alunos.map(a => `
         <div class="lista-item"><span>${escapeHtml(a.nome)} <small>(${escapeHtml(a.usuario)})</small></span>
           <span>
+            <button class="btn btn-pequeno btn-secundario" onclick="abrirDetalhesAluno('${a.id}')">📊 Detalhes</button>
             <button class="btn btn-pequeno btn-secundario" onclick="modalEditarAluno('${a.id}')">Editar</button>
             <button class="btn btn-pequeno btn-perigo" onclick="excluirAluno('${a.id}')">Excluir</button>
           </span>
         </div>`).join('')}
       <button class="btn btn-texto btn-pequeno" onclick="modalNovoAluno()">+ Adicionar aluno</button>
       <button class="btn btn-texto btn-pequeno" onclick="modalImportarAlunosJSON()">📥 Importar alunos via JSON</button>
+    </details>
+
+    <h4 style="margin:18px 0 8px;">Listas de atividades</h4>
+    ${turmaAtualDetalhe.listas.length === 0 ? '<div class="estado-vazio">Nenhuma lista criada ainda.</div>' : ''}
+    <div class="grid-cards">
+      ${turmaAtualDetalhe.listas.map(l => _cardLista(l)).join('')}
     </div>
-    <div class="card">
-      <h4>Listas de atividades</h4>
-      ${turmaAtualDetalhe.listas.map(l => `
-        <div class="lista-item"><span>${escapeHtml(l.titulo)} <small>(${(l.qIds || []).length} questões)</small></span>
-          <span>
-            <button class="btn btn-pequeno btn-secundario" onclick="abrirCorrecaoDiscursivas('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Corrigir discursivas</button>
-            <button class="btn btn-pequeno ${l.resolucaoLiberada ? 'btn-sucesso' : 'btn-secundario'}" onclick="alternarResolucao('${l.id}', ${!l.resolucaoLiberada})">${l.resolucaoLiberada ? 'Resolução liberada' : 'Liberar resolução'}</button>
-            <button class="btn btn-pequeno btn-perigo" onclick="excluirLista('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Excluir</button>
-          </span>
-        </div>`).join('')}
-      <button class="btn btn-texto btn-pequeno" onclick="modalNovaLista()">+ Nova lista</button>
-    </div>
-    <div class="card">
+    <button class="btn btn-texto btn-pequeno" onclick="modalNovaLista()">+ Nova lista</button>
+
+    ${acesso.total ? `
+    <div class="card" style="margin-top:16px;">
       <h4>Redações</h4>
       ${turmaAtualDetalhe.redacoes.map(r => `<div class="lista-item"><span>${escapeHtml(r.titulo)}</span>
         <span>
@@ -515,7 +517,186 @@ async function abrirTurma(escolaId, turmaId) {
       ${turmaAtualDetalhe.blocos.map(b => `<div class="lista-item"><span>${escapeHtml(b.nome)} <small>(${b.notaTotal} pts, ${b.modo === 'participacao' ? 'participação' : 'acerto'})</small></span></div>`).join('')}
       <button class="btn btn-texto btn-pequeno" onclick="modalNovoBloco()">+ Novo bloco</button>
     </div>
+    <div class="card">
+      <h4>Acesso de professores</h4>
+      <p style="font-size:0.85rem;color:var(--cinza-texto);">Acesso total (mesmos acessos que você tem nesta turma):</p>
+      ${(turmaAtualDetalhe.compartilhadoCom || []).map(u => `
+        <div class="lista-item"><span>${escapeHtml(u)}</span>
+          <button class="btn btn-pequeno btn-perigo" onclick="removerCompartilhamentoUI('${escapeHtml(u).replace(/'/g, "\\'")}')">Remover</button>
+        </div>`).join('') || '<p style="color:var(--cinza-texto);font-size:0.85rem;">Nenhum professor com acesso total ainda.</p>'}
+      <button class="btn btn-texto btn-pequeno" onclick="modalCompartilharTurma()">+ Dar acesso total a um professor</button>
+      <p style="font-size:0.85rem;color:var(--cinza-texto);margin-top:16px;">Acesso restrito a um componente curricular:</p>
+      ${(turmaAtualDetalhe.acessosComponente || []).map(a => `
+        <div class="lista-item"><span>${escapeHtml(a.user)} — ${escapeHtml(a.componente)}</span>
+          <button class="btn btn-pequeno btn-perigo" onclick="removerAcessoComponenteUI('${escapeHtml(a.user).replace(/'/g, "\\'")}', '${escapeHtml(a.componente).replace(/'/g, "\\'")}')">Remover</button>
+        </div>`).join('') || '<p style="color:var(--cinza-texto);font-size:0.85rem;">Nenhum acesso por componente ainda.</p>'}
+      <button class="btn btn-texto btn-pequeno" onclick="modalAtribuirComponente()">+ Atribuir professor a um componente</button>
+    </div>` : ''}
   `;
+}
+
+/** Card de uma lista de atividades — quantos alunos já responderam é calculado aqui mesmo,
+ * a partir dos dados que já vieram em turmaAtualDetalhe (sem precisar de outra chamada). */
+function _cardLista(l) {
+  const totalAlunos = turmaAtualDetalhe.alunos.length;
+  const responderam = turmaAtualDetalhe.alunos.filter(a => a.respostas && a.respostas[l.id]).length;
+  return `<div class="card-quadrado">
+    <h4>📝 ${escapeHtml(l.titulo)}</h4>
+    <p class="card-quadrado-info">
+      ${(l.qIds || []).length} questões${(l.componentes || []).length ? ' · ' + escapeHtml(l.componentes.join(', ')) : ''}<br>
+      ${responderam} de ${totalAlunos} aluno(s) já responderam
+      ${l.cronometroMin ? `<br>⏱ ${l.cronometroMin} min` : ''}
+      <br>${l.resolucaoLiberada ? '<span class="badge badge-feito">Resolução liberada</span>' : '<span class="badge badge-pendente">Resolução bloqueada</span>'}
+    </p>
+    <div class="card-quadrado-acoes" style="flex-wrap:wrap;">
+      <button class="btn btn-pequeno btn-primario" onclick="abrirDetalhesLista('${l.id}')">📊 Detalhes</button>
+      <button class="btn btn-pequeno btn-secundario" onclick="abrirQuestoesDaLista('${l.id}')">👁 Ver questões</button>
+      <button class="btn btn-pequeno btn-secundario" onclick="abrirCorrecaoDiscursivas('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Corrigir discursivas</button>
+      <button class="btn btn-pequeno ${l.resolucaoLiberada ? 'btn-sucesso' : 'btn-secundario'}" onclick="alternarResolucao('${l.id}', ${!l.resolucaoLiberada})">${l.resolucaoLiberada ? '🔓 Resolução liberada' : '🔒 Liberar resolução'}</button>
+      <button class="btn btn-pequeno btn-perigo" onclick="excluirLista('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Excluir</button>
+    </div>
+  </div>`;
+}
+
+/** "Detalhes" da lista: quantos responderam, média, tempo médio, ranking de questões com mais erro e situação por aluno. */
+async function abrirDetalhesLista(listaId) {
+  const dados = await chamarComLoading('questoes.detalhesLista', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, listaId });
+  const pct = v => (v === null || v === undefined) ? '—' : Math.round(v * 100) + '%';
+  const rankingComRespostas = dados.rankingErros.filter(r => r.respondidas > 0);
+  abrirModal(`<h3>📊 ${escapeHtml(dados.lista.titulo)}</h3>
+    <div class="cabecalho-resultado-grid" style="margin-bottom:14px;">
+      <div><small>Responderam</small><strong>${dados.alunosResponderam} de ${dados.totalAlunos}</strong></div>
+      <div><small>Média da turma</small><strong>${pct(dados.mediaPercentual)}</strong></div>
+      <div><small>Tempo médio</small><strong>${_formatarDuracao(dados.mediaDuracaoSegundos)}</strong></div>
+    </div>
+    <h4>Questões com mais erros</h4>
+    ${rankingComRespostas.length === 0 ? '<p style="color:var(--cinza-texto);font-size:0.85rem;">Ainda sem respostas suficientes pra calcular.</p>' :
+      rankingComRespostas.slice(0, 8).map(r => `
+        <div class="lista-item">
+          <span>${formatarTextoQuestao(r.enunciado).slice(0, 90)}...</span>
+          <span class="badge ${r.percentualErro > 0.5 ? 'badge-pendente' : 'badge-info'}">${Math.round((r.percentualErro || 0) * 100)}% erro (${r.erros}/${r.respondidas})</span>
+        </div>`).join('')}
+    <h4>Situação por aluno</h4>
+    ${dados.porAluno.map(a => `
+      <div class="lista-item">
+        <span>${escapeHtml(a.alunoNome)} ${a.pendenteDiscursiva ? '<span class="badge badge-pendente">Discursiva pendente</span>' : ''}</span>
+        <span>${a.respondeu ? `${pct(a.percentualGeral)} · ${_formatarDuracao(a.duracaoSegundos)}` : '<span class="badge badge-pendente">Não respondeu</span>'}</span>
+      </div>`).join('')}
+    <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
+}
+
+/** "Observar" uma lista já criada: mostra as questões completas (com gabarito/resolução), pro professor conferir depois de criada. */
+async function abrirQuestoesDaLista(listaId) {
+  const dados = await chamarComLoading('questoes.listarDaLista', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, listaId });
+  abrirModal(`<h3>👁 ${escapeHtml(dados.lista.titulo)}</h3>
+    ${dados.questoes.map((q, i) => renderResponderQuestao(q, i)).join('')}
+    <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
+  document.querySelectorAll('#modal-box input, #modal-box select, #modal-box textarea').forEach(el => { el.disabled = true; });
+}
+
+/** Painel do professor sobre UM aluno: desempenho em cada lista/redação e o resumo de diagnóstico. */
+async function abrirDetalhesAluno(alunoId) {
+  const dados = await chamarComLoading('turmas.detalhesAluno', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, alunoId });
+  const pct = v => (v === null || v === undefined) ? '—' : Math.round(v * 100) + '%';
+  const textoHipotese = { possivel_lacuna_base: '⚠️ Possível lacuna de base', dificuldade_conteudo_atual: '📍 Dificuldade no conteúdo atual' };
+  abrirModal(`<h3>${escapeHtml(dados.aluno.nome)}</h3>
+    <p style="color:var(--cinza-texto);font-size:0.85rem;margin-top:-8px;">${escapeHtml(dados.aluno.usuario)}</p>
+    <h4>Listas de atividades</h4>
+    ${dados.listas.length === 0 ? '<p style="color:var(--cinza-texto);font-size:0.85rem;">Nenhuma lista visível.</p>' : dados.listas.map(l => `
+      <div class="lista-item">
+        <span>${escapeHtml(l.titulo)}</span>
+        <span>${l.respondeu ? `${pct(l.percentualGeral)} (${l.acertos}/${l.total}) · ${_formatarDuracao(l.duracaoSegundos)}` : '<span class="badge badge-pendente">Não respondeu</span>'}</span>
+      </div>`).join('')}
+    ${dados.redacoes.length > 0 ? `<h4>Redações</h4>
+      ${dados.redacoes.map(r => `<div class="lista-item"><span>${escapeHtml(r.titulo)}</span>
+        <span class="badge ${r.revisada ? 'badge-feito' : (r.respondeu ? 'badge-info' : 'badge-pendente')}">${r.revisada ? 'Corrigida' : (r.respondeu ? 'Enviada' : 'Não entregue')}</span></div>`).join('')}` : ''}
+    ${dados.diagnostico.length > 0 ? `<h4>Diagnóstico</h4>
+      ${dados.diagnostico.map(d => `<div class="lista-item"><span>${escapeHtml(d.conteudo)}</span><span class="badge badge-info">${textoHipotese[d.hipotese] || escapeHtml(d.hipotese)}</span></div>`).join('')}` : ''}
+    <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
+}
+
+// ---------- Acesso de professores (compartilhamento total / por componente curricular) ----------
+
+function _htmlFormNovoProfessorInline() {
+  return `<div style="margin-top:10px;">
+    <button type="button" class="btn btn-texto btn-pequeno" onclick="_mostrarFormNovoProfessorInline(this)">+ Cadastrar novo professor</button>
+    <div id="form-novo-professor-inline" class="hidden">
+      <label>Nome</label><input id="input-novoprof-nome">
+      <label>Usuário</label><input id="input-novoprof-user">
+      <label>Senha</label><input id="input-novoprof-senha">
+      <button type="button" class="btn btn-secundario btn-pequeno" onclick="_criarProfessorInline()">Cadastrar</button>
+    </div>
+  </div>`;
+}
+function _mostrarFormNovoProfessorInline(botao) {
+  botao.nextElementSibling.classList.remove('hidden');
+  botao.classList.add('hidden');
+}
+async function _criarProfessorInline() {
+  const nome = document.getElementById('input-novoprof-nome').value;
+  const user = document.getElementById('input-novoprof-user').value;
+  const senha = document.getElementById('input-novoprof-senha').value;
+  if (!nome || !user || !senha) { toast('Preencha nome, usuário e senha.', 'erro'); return; }
+  await chamarComLoading('admin.criarProfessor', { nome, user, pass: senha, nivel: 'professor' });
+  toast('Professor cadastrado! Selecione ele na lista acima.', 'sucesso');
+  const { professores } = await chamarComLoading('turmas.listarProfessoresParaCompartilhar', {});
+  ['select-prof-compartilhar', 'select-prof-componente'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel) sel.innerHTML = professores.map(p => `<option value="${escapeHtml(p.user)}">${escapeHtml(p.nome)} (${escapeHtml(p.user)})</option>`).join('');
+  });
+  document.getElementById('form-novo-professor-inline').classList.add('hidden');
+  document.getElementById('input-novoprof-nome').value = '';
+  document.getElementById('input-novoprof-user').value = '';
+  document.getElementById('input-novoprof-senha').value = '';
+}
+
+async function modalCompartilharTurma() {
+  const { professores } = await chamarComLoading('turmas.listarProfessoresParaCompartilhar', {});
+  abrirModal(`<h3>Dar acesso total a um professor</h3>
+    <p style="font-size:0.85rem;color:var(--cinza-texto);">Esse professor passa a ter os mesmos acessos que você nesta turma (alunos, listas, redações, blocos de notas).</p>
+    <label>Professor</label>
+    <select id="select-prof-compartilhar">
+      ${professores.length === 0 ? '<option value="">Nenhum outro professor cadastrado</option>' : professores.map(p => `<option value="${escapeHtml(p.user)}">${escapeHtml(p.nome)} (${escapeHtml(p.user)})</option>`).join('')}
+    </select>
+    ${sessaoLocal.nivel === 'admin' ? _htmlFormNovoProfessorInline() : ''}
+    <button class="btn btn-primario btn-full" onclick="confirmarCompartilharTurma()">Dar acesso</button>`);
+}
+async function confirmarCompartilharTurma() {
+  const userProfessorAlvo = document.getElementById('select-prof-compartilhar').value;
+  if (!userProfessorAlvo) { toast('Selecione um professor.', 'erro'); return; }
+  await chamarComLoading('turmas.compartilhar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, userProfessorAlvo });
+  fecharModal(); toast('Acesso concedido.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+async function removerCompartilhamentoUI(userProfessorAlvo) {
+  if (!confirm('Remover o acesso total desse professor a esta turma?')) return;
+  await chamarComLoading('turmas.removerCompartilhamento', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, userProfessorAlvo });
+  toast('Acesso removido.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+
+async function modalAtribuirComponente() {
+  await carregarComponentes();
+  const { professores } = await chamarComLoading('turmas.listarProfessoresParaCompartilhar', {});
+  abrirModal(`<h3>Atribuir professor a um componente</h3>
+    <p style="font-size:0.85rem;color:var(--cinza-texto);">Esse professor só vai gerenciar listas, correções e notas do componente escolhido, dentro desta turma (continua vendo a lista de alunos normalmente).</p>
+    <label>Professor</label>
+    <select id="select-prof-componente">
+      ${professores.length === 0 ? '<option value="">Nenhum outro professor cadastrado</option>' : professores.map(p => `<option value="${escapeHtml(p.user)}">${escapeHtml(p.nome)} (${escapeHtml(p.user)})</option>`).join('')}
+    </select>
+    <label>Componente</label>${renderSelectComponente('select-comp-atribuir', '')}
+    ${sessaoLocal.nivel === 'admin' ? _htmlFormNovoProfessorInline() : ''}
+    <button class="btn btn-primario btn-full" onclick="confirmarAtribuirComponente()">Atribuir</button>`);
+}
+async function confirmarAtribuirComponente() {
+  const userProfessorAlvo = document.getElementById('select-prof-componente').value;
+  const componente = document.getElementById('select-comp-atribuir').value;
+  if (!userProfessorAlvo || !componente) { toast('Selecione o professor e o componente.', 'erro'); return; }
+  await chamarComLoading('turmas.atribuirAcessoComponente', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, userProfessorAlvo, componente });
+  fecharModal(); toast('Acesso concedido.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+async function removerAcessoComponenteUI(userProfessorAlvo, componente) {
+  if (!confirm('Remover esse acesso?')) return;
+  await chamarComLoading('turmas.removerAcessoComponente', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, userProfessorAlvo, componente });
+  toast('Acesso removido.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
 }
 
 async function excluirLista(listaId, titulo) {
@@ -675,10 +856,13 @@ async function _filtrarQuestoesLista(pagina) {
   const dados = await chamarComLoading('questoes.buscarPaginado', { filtros: window._listaFiltros, pagina: pagina || 1 });
   const container = document.getElementById('lista-checklist-questoes');
   container.innerHTML = dados.questoes.map(q => `
-    <label class="alternativa">
-      <input type="checkbox" class="chk-questao-lista" value="${q.id}" ${window._listaQuestoesSelecionadas.has(q.id) ? 'checked' : ''} onchange="_alternarSelecaoQuestaoLista('${q.id}', this.checked)">
-      <span>[${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}] ${escapeHtml(q.comp)} — ${formatarTextoQuestao(q.text).slice(0, 80)}...</span>
-    </label>`).join('') +
+    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">
+      <label class="alternativa" style="flex:1;margin-bottom:0;">
+        <input type="checkbox" class="chk-questao-lista" value="${q.id}" ${window._listaQuestoesSelecionadas.has(q.id) ? 'checked' : ''} onchange="_alternarSelecaoQuestaoLista('${q.id}', this.checked)">
+        <span>[${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}] ${escapeHtml(q.comp)} — ${formatarTextoQuestao(q.text).slice(0, 80)}...</span>
+      </label>
+      <button type="button" class="btn btn-pequeno btn-secundario" onclick='abrirVisualizacaoQuestao(${JSON.stringify(q).replace(/'/g, "&#39;")})'>👁 Ver</button>
+    </div>`).join('') +
     `<div class="linha-botoes" style="justify-content:center;">
       ${pagina > 1 ? `<button class="btn btn-secundario btn-pequeno" onclick="_filtrarQuestoesLista(${pagina - 1})">← Anterior</button>` : ''}
       <span>Página ${dados.pagina} de ${dados.totalPaginas || 1} (${dados.total} encontradas)</span>
@@ -863,13 +1047,34 @@ async function salvarNovoBloco() {
 // ======================================================================
 
 window._filtrosBancoQuestoes = { busca: '', tipo: '', comp: '', banca: '' };
+window._bancoQuestoesFiltrado = false;
+
+/**
+ * Modal de "visualizar questão completa" — reaproveita o mesmo motor de renderização usado
+ * pra responder prova (renderResponderQuestao já inclui a resolução via renderResolucaoQuestao
+ * quando `gabarito` vem preenchido no objeto). Abre num segundo modal, empilhado por cima do
+ * modal principal, pra não perder o formulário que já estava aberto (ex: Nova Lista).
+ */
+function abrirVisualizacaoQuestao(q) {
+  abrirModal2(`<h3>Visualizar questão</h3>
+    <div style="margin-bottom:10px;">
+      <span class="badge badge-info">${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}</span>
+      ${q.bloomLevel ? `<span class="badge badge-info">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
+      ${q.comp ? `<span class="badge badge-info">${escapeHtml(q.comp)}${q.cont ? ' · ' + escapeHtml(q.cont) : ''}</span>` : ''}
+    </div>
+    ${renderResponderQuestao(q, 0)}
+    <button class="btn btn-secundario btn-full" onclick="fecharModal2()">Fechar</button>`);
+  document.querySelectorAll('#modal-box-2 input, #modal-box-2 select, #modal-box-2 textarea').forEach(el => { el.disabled = true; });
+}
 
 async function renderBancoQuestoes(pagina) {
   pagina = pagina || 1;
   await carregarComponentes();
   const el = document.getElementById('professor-conteudo');
   const filtros = window._filtrosBancoQuestoes;
-  const dados = await chamarComLoading('questoes.buscarPaginado', { filtros, pagina });
+  const dados = window._bancoQuestoesFiltrado
+    ? await chamarComLoading('questoes.buscarPaginado', { filtros, pagina })
+    : { questoes: [], total: 0, pagina: 1, totalPaginas: 1 };
   el.innerHTML = `
     <div class="linha-botoes">
       <button class="btn btn-primario" onclick="modalNovaQuestao()">+ Nova questão</button>
@@ -897,7 +1102,9 @@ async function renderBancoQuestoes(pagina) {
       <button class="btn btn-secundario btn-pequeno" style="margin-top:8px;" onclick="aplicarFiltroBancoQuestoes()">Filtrar</button>
       <button class="btn btn-texto btn-pequeno" onclick="limparFiltroBancoQuestoes()">Limpar filtros</button>
     </div>
-    <p style="font-size:0.85rem;color:var(--cinza-texto);"><strong>${dados.total}</strong> questão${dados.total === 1 ? '' : 'ões'} encontrada${dados.total === 1 ? '' : 's'}.</p>
+    ${!window._bancoQuestoesFiltrado
+      ? '<div class="estado-vazio">Aplique um filtro pra ver as questões (clique em "Filtrar" mesmo sem preencher nada, pra ver todas).</div>'
+      : `<p style="font-size:0.85rem;color:var(--cinza-texto);"><strong>${dados.total}</strong> questão${dados.total === 1 ? '' : 'ões'} encontrada${dados.total === 1 ? '' : 's'}.</p>
     ${dados.questoes.map(q => `
       <div class="card">
         <span class="badge badge-info">${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}</span>
@@ -905,6 +1112,7 @@ async function renderBancoQuestoes(pagina) {
         <p>${formatarTextoQuestao(q.text)}</p>
         <small>${escapeHtml(q.comp)} · ${escapeHtml(q.cont || '')}</small>
         <div class="linha-botoes">
+          <button class="btn btn-pequeno btn-secundario" onclick='abrirVisualizacaoQuestao(${JSON.stringify(q).replace(/'/g, "&#39;")})'>👁 Ver</button>
           <button class="btn btn-pequeno btn-secundario" onclick='modalEditarQuestao(${JSON.stringify(q).replace(/'/g, "&#39;")})'>Editar</button>
           <button class="btn btn-pequeno btn-perigo" onclick="excluirQuestao('${q.id}')">Excluir</button>
         </div>
@@ -913,7 +1121,7 @@ async function renderBancoQuestoes(pagina) {
       ${pagina > 1 ? `<button class="btn btn-secundario btn-pequeno" onclick="renderBancoQuestoes(${pagina - 1})">← Anterior</button>` : ''}
       <span>Página ${dados.pagina} de ${dados.totalPaginas || 1}</span>
       ${pagina < dados.totalPaginas ? `<button class="btn btn-secundario btn-pequeno" onclick="renderBancoQuestoes(${pagina + 1})">Próxima →</button>` : ''}
-    </div>`;
+    </div>`}`;
 }
 
 function aplicarFiltroBancoQuestoes() {
@@ -923,10 +1131,12 @@ function aplicarFiltroBancoQuestoes() {
     tipo: document.getElementById('filtro-q-tipo').value,
     banca: document.getElementById('filtro-q-banca').value.trim()
   };
+  window._bancoQuestoesFiltrado = true;
   renderBancoQuestoes(1);
 }
 function limparFiltroBancoQuestoes() {
   window._filtrosBancoQuestoes = { busca: '', tipo: '', comp: '', banca: '' };
+  window._bancoQuestoesFiltrado = false;
   renderBancoQuestoes(1);
 }
 
@@ -956,12 +1166,13 @@ async function _modalFormQuestao(q) {
     <label>Imagens do enunciado</label>
     <input type="file" accept="image/*" onchange="adicionarImagem(this, 'questao')">
     <div id="preview-imagens-questao">${_previewImagens(window._imagensQuestaoAtual, 'questao')}</div>
-    <label>Resolução (explicação — só aparece pro aluno quando você liberar)</label>
+    <div id="editor-tipo-especifico"></div>
+    <label style="margin-top:18px;">Resolução (explicação — só aparece pro aluno quando você liberar)</label>
+    <p style="font-size:0.8rem;color:var(--cinza-texto);margin:0 0 6px;">Preencha junto com a questão: a resolução comentada é o que mais ajuda o aluno quando a correção for liberada.</p>
     <textarea id="input-q-resolucao" class="campo-matematico">${escapeHtml((q && q.resolucao) || '')}</textarea>
     <label>Imagens da resolução</label>
     <input type="file" accept="image/*" onchange="adicionarImagem(this, 'resolucao')">
     <div id="preview-imagens-resolucao">${_previewImagens(window._imagensResolucaoAtual, 'resolucao')}</div>
-    <div id="editor-tipo-especifico"></div>
     <button class="btn btn-primario btn-full" onclick="salvarQuestao(${q ? `'${q.id}'` : 'null'})">Salvar</button>`);
   window._questaoEditando = q;
   _atualizarEditorTipo();
@@ -1064,20 +1275,26 @@ const MODELO_JSON_QUESTOES = [
     bloomLevel: 'aplicar', resolucao: '1/2 = 2/4, então 2/4 + 1/4 = 3/4.' },
   { tipo: 'vf', comp: 'Ciências', cont: 'Água', text: 'Classifique as afirmações:',
     alternativas: [{ id: 'af1', texto: 'A água ferve a 100°C no nível do mar.' }, { id: 'af2', texto: 'O gelo é mais denso que a água líquida.' }],
-    gabarito: { af1: true, af2: false }, bloomLevel: 'lembrar' },
+    gabarito: { af1: true, af2: false }, bloomLevel: 'lembrar',
+    resolucao: 'Ao nível do mar (1 atm), a água ferve a 100°C — verdadeiro. O gelo é MENOS denso que a água líquida (por isso flutua) — falso.' },
   { tipo: 'relacione', comp: 'Geografia', cont: 'Capitais', text: 'Relacione o país à capital:',
     alternativas: { colunaA: [{ id: 'a1', texto: 'Brasil' }, { id: 'a2', texto: 'França' }], colunaB: [{ id: 'b1', texto: 'Brasília' }, { id: 'b2', texto: 'Paris' }] },
-    gabarito: { a1: 'b1', a2: 'b2' }, bloomLevel: 'entender' },
+    gabarito: { a1: 'b1', a2: 'b2' }, bloomLevel: 'entender',
+    resolucao: 'Brasília é a capital do Brasil desde 1960; Paris é a capital da França.' },
   { tipo: 'classifique', comp: 'Biologia', cont: 'Ecologia', text: 'Ordene do menor para o maior nível organizacional:',
     alternativas: [{ id: 'i1', texto: 'Célula' }, { id: 'i2', texto: 'Tecido' }, { id: 'i3', texto: 'Órgão' }],
-    gabarito: ['i1', 'i2', 'i3'], bloomLevel: 'analisar' },
+    gabarito: ['i1', 'i2', 'i3'], bloomLevel: 'analisar',
+    resolucao: 'A hierarquia biológica vai de células (unidade básica) a tecidos (grupos de células) a órgãos (grupos de tecidos).' },
   { tipo: 'ordenar', comp: 'História', cont: 'Linha do tempo', text: 'Ordene cronologicamente:',
     alternativas: [{ id: 'e1', texto: 'Proclamação da República' }, { id: 'e2', texto: 'Independência do Brasil' }],
-    gabarito: ['e2', 'e1'], bloomLevel: 'analisar' },
+    gabarito: ['e2', 'e1'], bloomLevel: 'analisar',
+    resolucao: 'A Independência do Brasil ocorreu em 1822; a Proclamação da República, em 1889 — quase 70 anos depois.' },
   { tipo: 'lacunas', comp: 'Português', cont: 'Gramática', text: 'O {{1}} concorda em gênero e número com o {{2}}.',
-    alternativas: 'O {{1}} concorda em gênero e número com o {{2}}.', gabarito: { '1': ['adjetivo'], '2': ['substantivo'] }, bloomLevel: 'entender' },
+    alternativas: 'O {{1}} concorda em gênero e número com o {{2}}.', gabarito: { '1': ['adjetivo'], '2': ['substantivo'] }, bloomLevel: 'entender',
+    resolucao: 'Regra de concordância nominal: o adjetivo se flexiona para concordar em gênero (masculino/feminino) e número (singular/plural) com o substantivo a que se refere.' },
   { tipo: 'discursiva', comp: 'Redação', cont: 'Argumentação', text: 'Explique, com suas palavras, a importância da reciclagem.',
-    alternativas: null, gabarito: null, bloomLevel: 'avaliar' }
+    alternativas: null, gabarito: null, bloomLevel: 'avaliar',
+    resolucao: 'Não tem gabarito fixo — sirva de referência pro professor/IA avaliar: a resposta deve citar ao menos a redução de resíduos e a economia de recursos naturais.' }
 ];
 
 function modalImportarJSON() {
@@ -1143,6 +1360,7 @@ async function confirmarImportarVestibular() {
       <div class="card">
         <label class="alternativa"><input type="checkbox" checked onchange="window._questoesVestibularPreview[${i}].incluir=this.checked"><span>${formatarTextoQuestao(q.text).slice(0, 150)}...</span></label>
         <small>${escapeHtml(q.comp)} · Gabarito: ${escapeHtml(q.gabarito)} · ${escapeHtml(LABELS_BLOOM[q.bloomLevel] || '')} · ${q.resolucao ? '✓ resolução extraída' : 'sem resolução no arquivo'}</small>
+        <div style="margin-top:6px;"><button type="button" class="btn btn-pequeno btn-secundario" onclick="abrirVisualizacaoQuestao(window._questoesVestibularPreview[${i}])">👁 Ver questão completa</button></div>
       </div>`).join('')}
     <button class="btn btn-sucesso btn-full" onclick="confirmarSalvarVestibular()">Salvar questões selecionadas</button>`;
 }
