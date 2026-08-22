@@ -1259,6 +1259,7 @@ async function renderBancoQuestoes(pagina) {
     <div class="linha-botoes">
       <button class="btn btn-primario" onclick="modalNovaQuestao()">+ Nova questão</button>
       <button class="btn btn-secundario" onclick="modalImportarJSON()">Importar JSON</button>
+      <button class="btn btn-secundario" onclick="modalImportarLoteComImagens()">🖼️ Importar em lote (com imagens)</button>
       <button class="btn btn-secundario" onclick="modalImportarVestibular()">Importar vestibular (IA)</button>
     </div>
     <div class="card">
@@ -1662,6 +1663,105 @@ async function confirmarImportarJSON() {
   try { arr = JSON.parse(document.getElementById('input-json-import').value); } catch (e) { toast('JSON inválido.', 'erro'); return; }
   const resultado = await chamarComLoading('questoes.importarJSON', { questoes: arr });
   fecharModal(); toast(`${resultado.importadas} importadas, ${resultado.ignoradasDuplicadas} duplicadas ignoradas.`, 'sucesso'); renderBancoQuestoes();
+}
+
+// ---------- Importar questões com imagens EM LOTE (sem precisar abrir formulário questão por questão) ----------
+// Estende o "Importar JSON": cada questão pode ter os campos extras `imagemArquivo` (imagem do
+// enunciado) e/ou `imagemResolucaoArquivo` (imagem da resolução) com o NOME EXATO de um arquivo
+// selecionado junto. A ferramenta casa cada nome com o arquivo correspondente, comprime, sobe pro
+// Drive (reaproveitando `imagens.upload`, o mesmo usado no formulário manual) e importa tudo de uma
+// vez (reaproveitando `questoes.importarJSON`) — sem precisar nenhuma mudança no backend.
+
+function modalImportarLoteComImagens() {
+  abrirModal(`<h3>🖼️ Importar questões com imagens em lote</h3>
+    <p style="font-size:0.85rem;color:var(--cinza-texto);">Cole o array JSON das questões (mesmo formato do "Importar JSON") e selecione TODAS as imagens de uma vez, num só clique. Em cada questão que tiver imagem, adicione o campo <code>imagemArquivo</code> (imagem do enunciado) e/ou <code>imagemResolucaoArquivo</code> (imagem da resolução) com o NOME EXATO do arquivo de imagem — a ferramenta casa pelo nome, sobe cada imagem automaticamente e importa todas as questões de uma vez, sem precisar abrir o formulário questão por questão.</p>
+    <button type="button" class="btn btn-secundario btn-full" onclick="copiarModeloJSONComImagem()">📋 Copiar modelo JSON (com imagem)</button>
+    <label>JSON das questões</label>
+    <textarea id="input-json-import-imagens" style="min-height:180px;"></textarea>
+    <label>Imagens (selecione todas de uma vez — os nomes dos arquivos precisam bater com o JSON acima)</label>
+    <input type="file" id="input-arquivos-imagens-lote" accept="image/*" multiple>
+    <p id="resultado-import-lote-imagens" style="font-size:0.85rem;color:var(--cinza-texto);margin-top:8px;"></p>
+    <button id="btn-confirmar-import-lote-imagens" class="btn btn-primario btn-full" onclick="confirmarImportarLoteComImagens()">Importar em lote</button>`);
+}
+
+async function copiarModeloJSONComImagem() {
+  const modelo = [{
+    tipo: 'multipla', comp: 'Matemática', cont: 'Geometria', ano: '9º ano EF',
+    text: 'Observe a figura abaixo. Qual é a medida do ângulo x?',
+    imagemArquivo: 'questao1.jpg',
+    alternativas: { A: '30°', B: '45°', C: '60°', D: '90°', E: '120°' },
+    gabarito: 'C', bloomLevel: 'aplicar', dimensaoConhecimento: 'Procedimental',
+    resolucao: 'Explicação de por que C é a resposta correta, referenciando a figura.',
+    imagemResolucaoArquivo: 'questao1-resolucao.jpg'
+  }];
+  const texto = JSON.stringify(modelo, null, 2);
+  try {
+    await navigator.clipboard.writeText(texto);
+    toast('Modelo copiado! Os nomes de arquivo do exemplo são só ilustrativos — troque pelos nomes reais das suas imagens (uma questão pode ter só imagemArquivo, só imagemResolucaoArquivo, os dois, ou nenhum).', 'sucesso');
+  } catch (e) {
+    document.getElementById('input-json-import-imagens').value = texto;
+    toast('Não consegui copiar automaticamente — coloquei o modelo no campo abaixo.', 'sucesso');
+  }
+}
+
+async function confirmarImportarLoteComImagens() {
+  let arr;
+  try { arr = JSON.parse(document.getElementById('input-json-import-imagens').value); } catch (e) { toast('JSON inválido.', 'erro'); return; }
+  if (!Array.isArray(arr) || arr.length === 0) { toast('O JSON precisa ser um array com ao menos uma questão.', 'erro'); return; }
+
+  const arquivosPorNome = {};
+  Array.from(document.getElementById('input-arquivos-imagens-lote').files || []).forEach(f => { arquivosPorNome[f.name] = f; });
+
+  const totalReferencias = arr.reduce((soma, q) =>
+    soma + [].concat(q.imagemArquivo || []).length + [].concat(q.imagemResolucaoArquivo || []).length, 0);
+
+  const resultadoEl = document.getElementById('resultado-import-lote-imagens');
+  const botao = document.getElementById('btn-confirmar-import-lote-imagens');
+  const naoEncontradas = [];
+  let enviadas = 0;
+  const atualizarProgresso = () => { resultadoEl.textContent = totalReferencias > 0 ? `Enviando imagens... ${enviadas}/${totalReferencias}` : ''; };
+
+  botao.disabled = true;
+  try {
+    for (const q of arr) {
+      await _anexarImagensDaQuestao(q, 'imagemArquivo', 'imagens', arquivosPorNome, naoEncontradas, () => { enviadas++; atualizarProgresso(); });
+      await _anexarImagensDaQuestao(q, 'imagemResolucaoArquivo', 'resolucaoImagens', arquivosPorNome, naoEncontradas, () => { enviadas++; atualizarProgresso(); });
+      delete q.imagemArquivo; delete q.imagemResolucaoArquivo;
+    }
+    resultadoEl.textContent = 'Imagens enviadas — importando questões...';
+    const resultado = await Api.chamar('questoes.importarJSON', { questoes: arr });
+    fecharModal();
+    let msg = `${resultado.importadas} importadas, ${resultado.ignoradasDuplicadas} duplicadas ignoradas.`;
+    if (naoEncontradas.length > 0) msg += ` ⚠️ Imagem(ns) não encontrada(s) entre os arquivos selecionados (questão foi importada mesmo assim, sem essa imagem): ${naoEncontradas.join(', ')}.`;
+    toast(msg, naoEncontradas.length > 0 ? 'erro' : 'sucesso');
+    renderBancoQuestoes();
+  } catch (e) {
+    toast(e.message, 'erro');
+  } finally {
+    botao.disabled = false;
+  }
+}
+
+/** Resolve o campo `imagemArquivo`/`imagemResolucaoArquivo` de UMA questão (string ou array de
+ * nomes) em imagens de fato enviadas pro Drive, empilhando no campo de destino (`imagens` ou
+ * `resolucaoImagens`) no MESMO formato que o upload manual usa: `{ id, data: url }`. */
+async function _anexarImagensDaQuestao(q, campoArquivo, campoDestino, arquivosPorNome, naoEncontradas, onEnviada) {
+  const valor = q[campoArquivo];
+  if (!valor) return;
+  const nomes = Array.isArray(valor) ? valor : [valor];
+  q[campoDestino] = q[campoDestino] || [];
+  for (const nome of nomes) {
+    const file = arquivosPorNome[nome];
+    if (!file) { naoEncontradas.push(nome); continue; }
+    try {
+      const dataUrlComprimido = await comprimirImagem(file, 1200);
+      const resultado = await Api.chamar('imagens.upload', { base64: dataUrlComprimido, nomeArquivo: nome });
+      q[campoDestino].push({ id: gerarId(), data: resultado.url });
+    } catch (e) {
+      naoEncontradas.push(nome + ' (falha no envio)');
+    }
+    onEnviada();
+  }
 }
 
 async function modalImportarVestibular() {

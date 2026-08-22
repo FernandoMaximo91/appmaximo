@@ -5,7 +5,7 @@
  * sempre vão direto pra rede, pra nunca mostrar dado desatualizado de prova/nota.
  */
 
-const CACHE_NAME = 'appmaximo-shell-v4'; // IMPORTANTE: mude esse número (v2, v3...) toda vez que
+const CACHE_NAME = 'appmaximo-shell-v6'; // IMPORTANTE: mude esse número (v2, v3...) toda vez que
 // algum arquivo da lista abaixo (index.html, app.js etc) for atualizado — senão o app instalado
 // como PWA continua servindo a versão antiga em cache pra sempre, mesmo depois de o site ser
 // atualizado no GitHub e o usuário dar refresh.
