@@ -11,6 +11,34 @@ const LABELS_BLOOM = {
   lembrar: 'Lembrar', entender: 'Entender', aplicar: 'Aplicar',
   analisar: 'Analisar', avaliar: 'Avaliar', criar: 'Criar'
 };
+// Dimensão do Conhecimento (2º eixo da Taxonomia de Bloom Revisada, Anderson & Krathwohl
+// 2001) — metadado só pro professor (banco de questões, formulário, relatórios), nunca
+// exibido pro aluno. Ver skill "appmaximo-criar-questoes" e a Matriz de Objetivos de Matemática.
+const DIMENSOES_CONHECIMENTO_OPCOES = ['Factual', 'Conceitual', 'Procedimental', 'Metacognitivo'];
+// Unidade Temática por componente — vocabulário oficial BNCC, só pros componentes onde a BNCC
+// define unidades REUTILIZÁVEIS de forma limpa (não muda por ano/série). Verificado via pesquisa
+// em 2026-08. Componentes fora desta lista (História, Biologia, Física, Química, Artes, Inglês,
+// Filosofia, Sociologia, EDC...) continuam com o campo em texto livre — a BNCC deles ou não tem
+// unidades reutilizáveis (ex: História é organizada por período/ano, não por tema fixo) ou não
+// foi verificada ainda.
+const UNIDADES_TEMATICAS_POR_COMPONENTE = {
+  'Matemática': ['Números', 'Álgebra', 'Geometria', 'Grandezas e Medidas', 'Probabilidade e Estatística'],
+  'Português': ['Oralidade', 'Leitura/Escuta', 'Produção de Textos', 'Análise Linguística/Semiótica'],
+  'Ciências': ['Matéria e Energia', 'Vida e Evolução', 'Terra e Universo'],
+  'Geografia': ['O Sujeito e seu Lugar no Mundo', 'Conexões e Escalas', 'Mundo do Trabalho', 'Formas de Representação e Pensamento Espacial', 'Natureza, Ambientes e Qualidade de Vida']
+};
+/** Lista de unidades temáticas pro componente dado, ou [] se esse componente não tem vocabulário fechado (campo fica texto livre). */
+function unidadesTematicasDoComponente(componente) {
+  return UNIDADES_TEMATICAS_POR_COMPONENTE[componente] || [];
+}
+/** União de todas as unidades temáticas conhecidas (todos os componentes mapeados), sem repetir — usada no filtro, que não trava por componente. */
+function todasUnidadesTematicasConhecidas() {
+  return [...new Set(Object.values(UNIDADES_TEMATICAS_POR_COMPONENTE).flat())];
+}
+// Só sugestão (datalist) pro campo "Ano/Série" — mantém texto livre (outros componentes/anos
+// não listados aqui continuam aceitos), mas ajuda a manter valores consistentes pro filtro
+// funcionar bem. Mesmos rótulos usados na "Matriz de Objetivos de Aprendizagem - Matemática".
+const ANOS_SERIE_SUGESTOES = ['6º ano EF', '7º ano EF', '8º ano EF', '9º ano EF', '1ª série EM', '2ª série EM', '3ª série EM'];
 
 // ========================================================================
 // EDITOR DE MATEMÁTICA — barra de símbolos pra inserir no campo de texto
@@ -175,7 +203,14 @@ function renderResolucaoQuestao(q) {
   const resolucaoTexto = q.resolucao ? `<p style="margin-top:8px;">${formatarTextoQuestao(q.resolucao)}</p>` : '';
   const imagens = (q.resolucaoImagens || []).map(img =>
     `<img src="${escapeHtml(img.data)}" style="max-width:100%;border-radius:8px;margin-top:6px;" alt="Imagem da resolução">`).join('');
-  return `<div class="card" style="background:var(--cinza-fundo);margin-top:10px;">${respostaCorreta}${resolucaoTexto}${imagens}</div>`;
+  // Objetivo de aprendizagem: contexto pedagógico opcional, liberado no mesmo momento que a
+  // resolução (mesma condição: aluno já entregou e o professor liberou). Não é a Dimensão do
+  // Conhecimento em si (isso continua só pro professor) — é a frase do "o que essa questão
+  // queria que você demonstrasse", quando o professor preencheu.
+  const objetivoTexto = q.objetivoAprendizagem
+    ? `<p style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--cinza-borda,#ccc);"><strong>🎯 O que esta questão avaliava:</strong> ${formatarTextoQuestao(q.objetivoAprendizagem)}</p>`
+    : '';
+  return `<div class="card" style="background:var(--cinza-fundo);margin-top:10px;">${respostaCorreta}${resolucaoTexto}${objetivoTexto}${imagens}</div>`;
 }
 
 /** Embaralha uma cópia do array — usado pra não mostrar "classifique"/"ordenar" já na ordem certa (senão a resposta fica óbvia). */

@@ -91,7 +91,7 @@ function ligarTabsProfessor() {
 }
 function abrirAbaProfessor(nome) {
   document.querySelectorAll('#tabs-professor button').forEach(b => b.classList.toggle('tab-ativa', b.dataset.tab === nome));
-  const map = { turmas: renderTurmas, questoes: renderBancoQuestoes, notas: renderNotas, diagnostico: renderDiagnostico, guia: renderGuiaClassificacao, admin: renderAdmin };
+  const map = { turmas: renderTurmas, questoes: renderBancoQuestoes, notas: renderNotas, diagnostico: renderDiagnostico, modelos: renderListasModelo, guia: renderGuiaClassificacao, admin: renderAdmin };
   (map[nome] || renderTurmas)();
 }
 
@@ -102,7 +102,7 @@ function ligarTabsAluno() {
 }
 function abrirAbaAluno(nome) {
   document.querySelectorAll('#tabs-aluno button').forEach(b => b.classList.toggle('tab-ativa', b.dataset.tab === nome));
-  const map = { pendentes: renderAlunoPendentes, concluidas: renderAlunoConcluidas, redacoes: renderAlunoRedacoes, extra: renderAlunoAtividadeExtra };
+  const map = { pendentes: renderAlunoPendentes, concluidas: renderAlunoConcluidas, redacoes: renderAlunoRedacoes, extra: renderAlunoAtividadeExtra, minhasAtividades: renderAlunoMinhasAtividades };
   (map[nome] || renderAlunoPendentes)();
 }
 
@@ -167,18 +167,33 @@ async function renderAlunoRedacoes() {
 
 async function renderAlunoAtividadeExtra() {
   const el = document.getElementById('aluno-conteudo');
-  el.innerHTML = `<div class="card" style="text-align:center;">
-    <p>Gere uma atividade extra com 3 questões, feita pela IA, sempre que quiser praticar. Se você tiver erros recentes, ela foca neles; senão, é uma revisão geral.</p>
-    <button class="btn btn-primario" onclick="gerarAtividadeExtra()">✨ Gerar atividade extra</button>
+  await carregarComponentes();
+  el.innerHTML = `<div class="card">
+    <p>Gere uma atividade extra com questões feitas pela IA, sempre que quiser praticar. Escolha quantas questões, um conteúdo específico (opcional) e quais níveis de Bloom quer treinar (opcional). Se não escolher conteúdo e você tiver erros recentes, a atividade foca neles; senão, é uma revisão geral. Todas as atividades corrigidas ficam salvas na aba "Minhas Atividades".</p>
+    <label>Componente <small style="color:var(--cinza-texto);font-weight:400;">(obrigatório só se você escolher um conteúdo específico, ou se ainda não tiver nenhuma prova feita)</small></label>
+    ${renderSelectComponente('select-extra-comp', '')}
+    <label>Conteúdo específico (opcional)</label>
+    <input id="input-extra-conteudo" placeholder="Ex: Frações — deixe em branco pra deixar a IA escolher">
+    <label>Quantidade de questões</label>
+    <input id="input-extra-qtd" type="number" min="1" max="10" value="3">
+    <label>Níveis de Bloom pra praticar <small style="color:var(--cinza-texto);font-weight:400;">(opcional — deixe tudo desmarcado pra IA variar)</small></label>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 0;">
+      ${Object.entries(LABELS_BLOOM).map(([k, label]) => `
+        <label style="display:inline-flex;align-items:center;gap:4px;font-weight:400;"><input type="checkbox" class="chk-extra-bloom" value="${k}"> ${label}</label>`).join('')}
+    </div>
+    <button class="btn btn-primario btn-full" style="margin-top:8px;" onclick="gerarAtividadeExtra()">✨ Gerar atividade extra</button>
     <div id="atividade-extra-resultado"></div>
   </div>`;
 }
 
-/** componenteEscolhido só é usado quando o aluno ainda não tem NENHUM histórico de provas (aluno novo). */
-async function gerarAtividadeExtra(componenteEscolhido) {
-  if (componenteEscolhido === '') { toast('Escolha um componente pra continuar.', 'erro'); return; }
+async function gerarAtividadeExtra() {
+  const componente = document.getElementById('select-extra-comp').value;
+  const conteudo = document.getElementById('input-extra-conteudo').value.trim();
+  const quantidade = parseInt(document.getElementById('input-extra-qtd').value, 10) || 3;
+  const niveisBloom = Array.from(document.querySelectorAll('.chk-extra-bloom:checked')).map(c => c.value);
+  if (conteudo && !componente) { toast('Escolha o componente curricular deste conteúdo.', 'erro'); return; }
   try {
-    const dados = await chamarComLoading('ia.gerarAtividadeComplementar', componenteEscolhido ? { componente: componenteEscolhido } : {});
+    const dados = await chamarComLoading('ia.gerarAtividadeComplementar', { componente, conteudo, quantidade, niveisBloom });
     window._atividadeExtraAtual = dados;
     const html = dados.questoes.map((q, i) => `
       <div class="questao-box">
@@ -193,11 +208,7 @@ async function gerarAtividadeExtra(componenteEscolhido) {
       `<button class="btn btn-sucesso btn-full" onclick="corrigirAtividadeExtra()">Corrigir</button>`;
   } catch (e) {
     if (e.code === 'ESCOLHA_COMPONENTE') {
-      await carregarComponentes();
-      document.getElementById('atividade-extra-resultado').innerHTML = `
-        <p style="font-size:0.85rem;color:var(--cinza-texto);">Você ainda não tem histórico de provas — escolha um componente pra praticar:</p>
-        ${renderSelectComponente('select-componente-extra', '')}
-        <button class="btn btn-primario btn-full" style="margin-top:8px;" onclick="gerarAtividadeExtra(document.getElementById('select-componente-extra').value)">Gerar</button>`;
+      toast('Você ainda não tem histórico de provas — escolha um componente acima pra praticar.', 'erro');
     }
     /* outros erros já mostrados via toast */
   }
@@ -218,6 +229,39 @@ async function corrigirAtividadeExtra() {
         <p style="color:var(--cinza-texto);">${escapeHtml(r.explicacao)}</p>
       </div>`).join('')}
     <button class="btn btn-secundario btn-full" onclick="renderAlunoAtividadeExtra()">Fechar</button>`;
+}
+
+// ---------- Aluno: histórico permanente de atividades extras ("Minhas Atividades") ----------
+
+async function renderAlunoMinhasAtividades() {
+  const el = document.getElementById('aluno-conteudo');
+  const dados = await chamarComLoading('ia.listarAtividadesExtras', {});
+  if (dados.itens.length === 0) { el.innerHTML = '<div class="estado-vazio">Nenhuma atividade extra corrigida ainda — veja a aba "Atividade Extra".</div>'; return; }
+  el.innerHTML = dados.itens.map((item, i) => `
+    <div class="card">
+      <div class="lista-item" style="cursor:pointer;border-bottom:none;padding:0;" onclick="_alternarDetalheAtividadeExtra(${i})">
+        <div>
+          <strong>${escapeHtml(item.comp)}${item.conteudo ? ' · ' + escapeHtml(item.conteudo) : ''}</strong><br>
+          <small>${new Date(item.corrigidaEm).toLocaleString('pt-BR')} · ${item.acertos}/${item.total} acertos${item.niveisBloom && item.niveisBloom.length ? ' · ' + item.niveisBloom.map(n => LABELS_BLOOM[n] || n).join(', ') : ''}</small>
+        </div>
+        <span class="badge badge-info">${Math.round((item.acertos / item.total) * 100)}%</span>
+      </div>
+      <div id="detalhe-atividade-extra-${i}" class="hidden" style="margin-top:10px;">
+        ${item.questoes.map((q, j) => {
+          const r = item.resultado[j];
+          return `<div class="card" style="background:var(--cinza-fundo);">
+            <strong>${j + 1}.</strong> ${formatarTextoQuestao(q.text)}
+            ${q.bloomLevel ? `<span class="badge badge-info" style="margin-left:6px;">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
+            <p>${r.correta ? '✅ Correto' : '❌ Errado — sua resposta: ' + escapeHtml(item.respostas[q.id] || '—') + ' · resposta certa: ' + escapeHtml(r.gabarito)}</p>
+            <p style="color:var(--cinza-texto);">${escapeHtml(r.explicacao)}</p>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function _alternarDetalheAtividadeExtra(i) {
+  document.getElementById(`detalhe-atividade-extra-${i}`).classList.toggle('hidden');
 }
 
 // ======================================================================
@@ -551,6 +595,8 @@ function _cardLista(l) {
     <div class="card-quadrado-acoes" style="flex-wrap:wrap;">
       <button class="btn btn-pequeno btn-primario" onclick="abrirDetalhesLista('${l.id}')">📊 Detalhes</button>
       <button class="btn btn-pequeno btn-secundario" onclick="abrirQuestoesDaLista('${l.id}')">👁 Ver questões</button>
+      <button class="btn btn-pequeno btn-secundario" onclick="exportarListaPdf('${l.id}')">📄 Exportar PDF</button>
+      <button class="btn btn-pequeno btn-secundario" onclick="salvarListaComoModelo('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">💾 Salvar como modelo</button>
       <button class="btn btn-pequeno btn-secundario" onclick="abrirCorrecaoDiscursivas('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Corrigir discursivas</button>
       <button class="btn btn-pequeno ${l.resolucaoLiberada ? 'btn-sucesso' : 'btn-secundario'}" onclick="alternarResolucao('${l.id}', ${!l.resolucaoLiberada})">${l.resolucaoLiberada ? '🔓 Resolução liberada' : '🔒 Liberar resolução'}</button>
       <button class="btn btn-pequeno btn-perigo" onclick="excluirLista('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Excluir</button>
@@ -573,9 +619,12 @@ async function abrirDetalhesLista(listaId) {
     ${rankingComRespostas.length === 0 ? '<p style="color:var(--cinza-texto);font-size:0.85rem;">Ainda sem respostas suficientes pra calcular.</p>' :
       rankingComRespostas.slice(0, 8).map(r => `
         <div class="lista-item">
-          <span>${formatarTextoQuestao(r.enunciado).slice(0, 90)}...</span>
+          <span>${formatarTextoQuestao(r.enunciado).slice(0, 90)}...
+            ${r.bloomLevel ? `<br><small style="color:var(--cinza-texto);">${escapeHtml(LABELS_BLOOM[r.bloomLevel] || r.bloomLevel)}${r.dimensaoConhecimento ? ' · ' + escapeHtml(r.dimensaoConhecimento) : ''}</small>` : ''}
+          </span>
           <span class="badge ${r.percentualErro > 0.5 ? 'badge-pendente' : 'badge-info'}">${Math.round((r.percentualErro || 0) * 100)}% erro (${r.erros}/${r.respondidas})</span>
         </div>`).join('')}
+    <p style="font-size:0.78rem;color:var(--cinza-texto);margin-top:4px;">Nível de Bloom e Dimensão do Conhecimento ajudam a interpretar o erro: muitos erros concentrados no mesmo nível/dimensão, em vez de espalhados, podem indicar uma lacuna mais específica (ex: turma erra mais em "Analisar" do que em "Aplicar" no mesmo conteúdo).</p>
     <h4>Situação por aluno</h4>
     ${dados.porAluno.map(a => `
       <div class="lista-item">
@@ -589,9 +638,51 @@ async function abrirDetalhesLista(listaId) {
 async function abrirQuestoesDaLista(listaId) {
   const dados = await chamarComLoading('questoes.listarDaLista', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, listaId });
   abrirModal(`<h3>👁 ${escapeHtml(dados.lista.titulo)}</h3>
-    ${dados.questoes.map((q, i) => renderResponderQuestao(q, i)).join('')}
+    ${dados.questoes.map((q, i) => `
+      <div style="margin-bottom:4px;">
+        ${q.bloomLevel ? `<span class="badge badge-info">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
+        ${q.dimensaoConhecimento ? `<span class="badge badge-info">${escapeHtml(q.dimensaoConhecimento)}</span>` : ''}
+      </div>
+      ${renderResponderQuestao(q, i)}`).join('')}
     <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
   document.querySelectorAll('#modal-box input, #modal-box select, #modal-box textarea').forEach(el => { el.disabled = true; });
+}
+
+/** Cabeçalho de marca do AppMaximo pra exportação de listas em PDF pelo professor (questões + gabarito + resolução). */
+function _cabecalhoExportacaoLista(lista) {
+  const agora = new Date().toLocaleDateString('pt-BR');
+  return `<div style="background:linear-gradient(135deg,var(--azul-escuro),var(--azul));color:white;padding:20px 24px;border-radius:10px;margin-bottom:18px;">
+    <div style="font-size:1.4rem;font-weight:800;">📘 AppMaximo</div>
+    <div style="font-size:1.15rem;font-weight:700;margin-top:10px;">${escapeHtml(lista.titulo)}</div>
+    <div style="font-size:0.85rem;opacity:0.92;margin-top:6px;line-height:1.5;">
+      ${escapeHtml(turmaAtualDetalhe.nome)}${(lista.componentes || []).length ? ' · ' + escapeHtml(lista.componentes.join(', ')) : ''}<br>
+      Gabarito e resolução comentada · gerado em ${agora} por ${escapeHtml(sessaoLocal.nome)}
+    </div>
+  </div>`;
+}
+
+/** Exporta uma lista (questões + gabarito + resolução) em PDF com cabeçalho de marca, pro professor imprimir/compartilhar. */
+async function exportarListaPdf(listaId) {
+  if (typeof html2pdf === 'undefined') { toast('Não foi possível gerar o PDF agora — verifique sua conexão com a internet e tente de novo.', 'erro'); return; }
+  const dados = await chamarComLoading('questoes.listarDaLista', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, listaId });
+  const listaCompleta = (turmaAtualDetalhe.listas || []).find(l => l.id === listaId) || dados.lista;
+
+  const area = document.createElement('div');
+  area.id = 'area-lista-pdf-tmp';
+  area.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:white;padding:4px;';
+  area.innerHTML = _cabecalhoExportacaoLista({ ...dados.lista, componentes: listaCompleta.componentes }) +
+    dados.questoes.map((q, i) => renderResponderQuestao(q, i)).join('');
+  document.body.appendChild(area);
+  area.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+
+  const nomeArquivo = `${(dados.lista.titulo || 'lista').replace(/[^\w\s-]/g, '')} - gabarito.pdf`;
+  try {
+    await html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
+  } catch (e) {
+    toast('Não foi possível gerar o PDF agora. Tente de novo.', 'erro');
+  } finally {
+    area.remove();
+  }
 }
 
 /** Painel do professor sobre UM aluno: desempenho em cada lista/redação e o resumo de diagnóstico. */
@@ -611,7 +702,10 @@ async function abrirDetalhesAluno(alunoId) {
       ${dados.redacoes.map(r => `<div class="lista-item"><span>${escapeHtml(r.titulo)}</span>
         <span class="badge ${r.revisada ? 'badge-feito' : (r.respondeu ? 'badge-info' : 'badge-pendente')}">${r.revisada ? 'Corrigida' : (r.respondeu ? 'Enviada' : 'Não entregue')}</span></div>`).join('')}` : ''}
     ${dados.diagnostico.length > 0 ? `<h4>Diagnóstico</h4>
-      ${dados.diagnostico.map(d => `<div class="lista-item"><span>${escapeHtml(d.conteudo)}</span><span class="badge badge-info">${textoHipotese[d.hipotese] || escapeHtml(d.hipotese)}</span></div>`).join('')}` : ''}
+      ${dados.diagnostico.map(d => `<div class="lista-item">
+        <span>${escapeHtml(d.conteudo)}</span>
+        <span>${d.hipotese !== 'indeterminado' ? `<span class="badge badge-info">${textoHipotese[d.hipotese] || escapeHtml(d.hipotese)}</span>` : ''}${_htmlHipoteseDimensao(d.hipoteseDimensao)}</span>
+      </div>`).join('')}` : ''}
     <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
 }
 
@@ -728,9 +822,10 @@ function _opcoesComponente(valorAtual, comOpcaoTodos) {
   return opcaoVazia + opcoes + opcaoNovo;
 }
 
-/** <select> de componente curricular. Use comOpcaoTodos=true em filtros (onde "vazio" = não filtrar). */
-function renderSelectComponente(idSelect, valorAtual, comOpcaoTodos) {
-  return `<select id="${idSelect}" data-com-opcao-todos="${comOpcaoTodos ? '1' : '0'}" onchange="_tratarSelecaoComponente('${idSelect}')">${_opcoesComponente(valorAtual, comOpcaoTodos)}</select>`;
+/** <select> de componente curricular. Use comOpcaoTodos=true em filtros (onde "vazio" = não filtrar). onchangeExtra: JS extra (string) rodado depois da lógica padrão, ex: pra atualizar outro campo que depende do componente escolhido. */
+function renderSelectComponente(idSelect, valorAtual, comOpcaoTodos, onchangeExtra) {
+  const onchange = `_tratarSelecaoComponente('${idSelect}')${onchangeExtra ? ';' + onchangeExtra : ''}`;
+  return `<select id="${idSelect}" data-com-opcao-todos="${comOpcaoTodos ? '1' : '0'}" onchange="${onchange}">${_opcoesComponente(valorAtual, comOpcaoTodos)}</select>`;
 }
 
 async function _tratarSelecaoComponente(idSelect) {
@@ -884,6 +979,80 @@ async function salvarNovaLista() {
   if (qIds.length === 0) { toast('Selecione ao menos uma questão (em qualquer página/filtro — a seleção é mantida).', 'erro'); return; }
   await chamarComLoading('listas.criar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, titulo, cronometroMin, qIds });
   fecharModal(); toast('Lista criada.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+
+// ======================================================================
+// PROFESSOR — BIBLIOTECA DE LISTAS SALVAS (modelos reutilizáveis, fora de turma)
+// ======================================================================
+
+/** Salva uma lista já existente (de dentro de uma turma) como modelo reutilizável na Biblioteca. */
+async function salvarListaComoModelo(listaId, tituloAtual) {
+  const lista = (turmaAtualDetalhe.listas || []).find(l => l.id === listaId);
+  if (!lista) { toast('Lista não encontrada.', 'erro'); return; }
+  const titulo = prompt('Nome do modelo (pra reconhecer depois na Biblioteca de Listas Salvas):', tituloAtual);
+  if (!titulo || !titulo.trim()) return;
+  await chamarComLoading('listasModelo.salvar', { titulo: titulo.trim(), qIds: lista.qIds, cronometroMin: lista.cronometroMin });
+  toast('Modelo salvo! Veja na aba "💾 Listas Salvas".', 'sucesso');
+}
+
+async function renderListasModelo(busca, componente) {
+  const el = document.getElementById('professor-conteudo');
+  await carregarComponentes();
+  const dados = await chamarComLoading('listasModelo.listar', { busca: busca || '', componente: componente || '' });
+  el.innerHTML = `
+    <p style="color:var(--cinza-texto);">Modelos de lista que você salvou (título + questões + cronômetro), reutilizáveis em qualquer turma sua. Reaproveitar sempre cria uma lista NOVA na turma escolhida — não afeta os outros lugares onde o mesmo modelo já foi usado.</p>
+    <div class="card">
+      <div style="display:flex;gap:8px;">
+        <input id="filtro-modelo-busca" placeholder="Buscar por título ou conteúdo..." value="${escapeHtml(busca || '')}" style="flex:2;">
+        <div style="flex:1;">${renderSelectComponente('filtro-modelo-comp', componente || '', true)}</div>
+      </div>
+      <button class="btn btn-secundario btn-pequeno" style="margin-top:8px;" onclick="_filtrarListasModelo()">Filtrar</button>
+    </div>
+    ${dados.itens.length === 0 ? '<div class="estado-vazio">Nenhum modelo salvo ainda. Numa turma, abra uma lista e clique em "💾 Salvar como modelo".</div>' :
+      dados.itens.map(m => `
+        <div class="card">
+          <strong>${escapeHtml(m.titulo)}</strong><br>
+          <small>${(m.componentes || []).map(c => escapeHtml(c)).join(', ')} · ${m.totalQuestoes} questões${m.cronometroMin ? ' · ⏱ ' + m.cronometroMin + ' min' : ''}</small><br>
+          ${(m.conteudos || []).length ? `<div style="margin-top:6px;">${m.conteudos.map(c => `<span class="badge badge-info">${escapeHtml(c)}</span>`).join(' ')}</div>` : ''}
+          <div class="linha-botoes">
+            <button class="btn btn-pequeno btn-primario" onclick="abrirModalUsarModelo('${m.id}', '${escapeHtml(m.titulo).replace(/'/g, "\\'")}')">▶ Usar numa turma</button>
+            <button class="btn btn-pequeno btn-perigo" onclick="excluirModeloLista('${m.id}', '${escapeHtml(m.titulo).replace(/'/g, "\\'")}')">Excluir</button>
+          </div>
+        </div>`).join('')}`;
+}
+
+function _filtrarListasModelo() {
+  renderListasModelo(document.getElementById('filtro-modelo-busca').value.trim(), document.getElementById('filtro-modelo-comp').value);
+}
+
+/** Modal pra escolher em qual turma reaproveitar o modelo — sempre cria uma lista NOVA lá. */
+async function abrirModalUsarModelo(modeloId, tituloModelo) {
+  const escolas = await chamarComLoading('turmas.listarEscolas', {});
+  const todasTurmas = escolas.escolas.flatMap(e => e.turmas.map(t => ({ ...t, escolaId: e.id })));
+  if (todasTurmas.length === 0) { toast('Você ainda não tem nenhuma turma.', 'erro'); return; }
+  abrirModal(`<h3>Usar modelo "${escapeHtml(tituloModelo)}"</h3>
+    <p style="font-size:0.85rem;color:var(--cinza-texto);">Cria uma lista nova, com as mesmas questões do modelo, na turma escolhida.</p>
+    <label>Turma de destino</label>
+    <select id="select-turma-usar-modelo">${todasTurmas.map(t => `<option value="${t.id}|${t.escolaId}">${escapeHtml(t.nome)}</option>`).join('')}</select>
+    <label>Título da nova lista</label>
+    <input id="input-titulo-usar-modelo" value="${escapeHtml(tituloModelo)}">
+    <button class="btn btn-primario btn-full" onclick="confirmarUsarModelo('${modeloId}')">Criar lista nesta turma</button>`);
+}
+
+async function confirmarUsarModelo(modeloId) {
+  const [turmaId, escolaId] = document.getElementById('select-turma-usar-modelo').value.split('|');
+  const tituloNovo = document.getElementById('input-titulo-usar-modelo').value.trim();
+  await chamarComLoading('listasModelo.usar', { escolaId, turmaId, modeloId, tituloNovo });
+  fecharModal();
+  toast('Lista criada a partir do modelo.', 'sucesso');
+  if (turmaAtualDetalhe && turmaAtualDetalhe.id === turmaId) abrirTurma(escolaId, turmaId);
+}
+
+async function excluirModeloLista(modeloId, titulo) {
+  if (!confirm(`Excluir o modelo "${titulo}" da Biblioteca? As listas já criadas a partir dele em turmas não são afetadas.`)) return;
+  await chamarComLoading('listasModelo.excluir', { modeloId });
+  toast('Modelo excluído.', 'sucesso');
+  renderListasModelo();
 }
 
 function modalNovaRedacao() {
@@ -1046,7 +1215,7 @@ async function salvarNovoBloco() {
 // PROFESSOR — BANCO DE QUESTÕES
 // ======================================================================
 
-window._filtrosBancoQuestoes = { busca: '', tipo: '', comp: '', banca: '' };
+window._filtrosBancoQuestoes = { busca: '', tipo: '', comp: '', banca: '', bloomLevel: '', dimensaoConhecimento: '', ano: '', unidadeTematica: '' };
 window._bancoQuestoesFiltrado = false;
 
 /**
@@ -1060,8 +1229,12 @@ function abrirVisualizacaoQuestao(q) {
     <div style="margin-bottom:10px;">
       <span class="badge badge-info">${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}</span>
       ${q.bloomLevel ? `<span class="badge badge-info">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
+      ${q.dimensaoConhecimento ? `<span class="badge badge-info">Dimensão: ${escapeHtml(q.dimensaoConhecimento)}</span>` : ''}
       ${q.comp ? `<span class="badge badge-info">${escapeHtml(q.comp)}${q.cont ? ' · ' + escapeHtml(q.cont) : ''}</span>` : ''}
+      ${q.unidadeTematica ? `<span class="badge badge-info">${escapeHtml(q.unidadeTematica)}</span>` : ''}
+      ${q.ano ? `<span class="badge badge-info">${escapeHtml(q.ano)}</span>` : ''}
     </div>
+    <p style="font-size:0.78rem;color:var(--cinza-texto);margin:-6px 0 10px;">Classificação visível só pra você (professor) — o aluno nunca vê a Dimensão do Conhecimento nem a Unidade Temática.</p>
     ${renderResponderQuestao(q, 0)}
     <button class="btn btn-secundario btn-full" onclick="fecharModal2()">Fechar</button>`);
   document.querySelectorAll('#modal-box-2 input, #modal-box-2 select, #modal-box-2 textarea').forEach(el => { el.disabled = true; });
@@ -1075,6 +1248,13 @@ async function renderBancoQuestoes(pagina) {
   const dados = window._bancoQuestoesFiltrado
     ? await chamarComLoading('questoes.buscarPaginado', { filtros, pagina })
     : { questoes: [], total: 0, pagina: 1, totalPaginas: 1 };
+  // Hint da biblioteca de listas salvas: se a busca bater com o título ou os conteúdos de algum
+  // modelo já salvo por este professor, sugere reaproveitar em vez de montar tudo de novo. Busca
+  // silenciosa (sem loading/toast) — não deve atrapalhar o fluxo normal de filtro de questões.
+  let modelosSugeridos = [];
+  if (window._bancoQuestoesFiltrado && filtros.busca) {
+    try { modelosSugeridos = (await Api.chamar('listasModelo.listar', { busca: filtros.busca })).itens; } catch (e) { /* hint é best-effort */ }
+  }
   el.innerHTML = `
     <div class="linha-botoes">
       <button class="btn btn-primario" onclick="modalNovaQuestao()">+ Nova questão</button>
@@ -1099,16 +1279,53 @@ async function renderBancoQuestoes(pagina) {
       </div>
       <label>Banca (ex: FUVEST, ENEM)</label>
       <input id="filtro-q-banca" value="${escapeHtml(filtros.banca || '')}" placeholder="Ex: ENEM">
+      <p style="font-size:0.78rem;color:var(--cinza-texto);margin:14px 0 4px;">Filtros gerais (Taxonomia de Bloom Revisada — Anderson &amp; Krathwohl, 2001)</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:140px;">
+          <label>Nível de Bloom</label>
+          <select id="filtro-q-bloom">
+            <option value="">Todos</option>
+            ${Object.keys(LABELS_BLOOM).map(k => `<option value="${k}" ${filtros.bloomLevel === k ? 'selected' : ''}>${LABELS_BLOOM[k]}</option>`).join('')}
+          </select>
+        </div>
+        <div style="flex:1;min-width:140px;">
+          <label>Dimensão do Conhecimento</label>
+          <select id="filtro-q-dimensao">
+            <option value="">Todas</option>
+            ${DIMENSOES_CONHECIMENTO_OPCOES.map(d => `<option value="${d}" ${filtros.dimensaoConhecimento === d ? 'selected' : ''}>${d}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <div style="flex:1;min-width:140px;">
+          <label>Ano/Série</label>
+          <input id="filtro-q-ano" list="lista-anos-serie-filtro" value="${escapeHtml(filtros.ano || '')}" placeholder="Ex: 8º ano EF">
+          <datalist id="lista-anos-serie-filtro">${ANOS_SERIE_SUGESTOES.map(a => `<option value="${a}">`).join('')}</datalist>
+        </div>
+        <div style="flex:1;min-width:140px;">
+          <label>Unidade Temática</label>
+          <input id="filtro-q-unidade" list="lista-unidades-tematicas-filtro" value="${escapeHtml(filtros.unidadeTematica || '')}" placeholder="Ex: Geometria, Leitura/Escuta...">
+          <datalist id="lista-unidades-tematicas-filtro">${todasUnidadesTematicasConhecidas().map(u => `<option value="${u}">`).join('')}</datalist>
+        </div>
+      </div>
       <button class="btn btn-secundario btn-pequeno" style="margin-top:8px;" onclick="aplicarFiltroBancoQuestoes()">Filtrar</button>
       <button class="btn btn-texto btn-pequeno" onclick="limparFiltroBancoQuestoes()">Limpar filtros</button>
     </div>
     ${!window._bancoQuestoesFiltrado
       ? '<div class="estado-vazio">Aplique um filtro pra ver as questões (clique em "Filtrar" mesmo sem preencher nada, pra ver todas).</div>'
-      : `<p style="font-size:0.85rem;color:var(--cinza-texto);"><strong>${dados.total}</strong> questão${dados.total === 1 ? '' : 'ões'} encontrada${dados.total === 1 ? '' : 's'}.</p>
+      : `${modelosSugeridos.length > 0 ? `
+      <div class="alerta alerta-info">
+        💾 Você já tem ${modelosSugeridos.length === 1 ? 'uma lista salva' : modelosSugeridos.length + ' listas salvas'} relacionada${modelosSugeridos.length === 1 ? '' : 's'} a "${escapeHtml(filtros.busca)}": ${modelosSugeridos.map(m => escapeHtml(m.titulo)).join(', ')}.
+        <button class="btn btn-texto btn-pequeno" onclick="abrirAbaProfessor('modelos')" style="padding:2px 6px;">Ver na Biblioteca →</button>
+      </div>` : ''}
+      <p style="font-size:0.85rem;color:var(--cinza-texto);"><strong>${dados.total}</strong> questão${dados.total === 1 ? '' : 'ões'} encontrada${dados.total === 1 ? '' : 's'}.</p>
     ${dados.questoes.map(q => `
       <div class="card">
         <span class="badge badge-info">${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}</span>
         ${q.bloomLevel ? `<span class="badge badge-info">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
+        ${q.dimensaoConhecimento ? `<span class="badge badge-info">${escapeHtml(q.dimensaoConhecimento)}</span>` : ''}
+        ${q.unidadeTematica ? `<span class="badge badge-info">${escapeHtml(q.unidadeTematica)}</span>` : ''}
+        ${q.ano ? `<span class="badge badge-info">${escapeHtml(q.ano)}</span>` : ''}
         <p>${formatarTextoQuestao(q.text)}</p>
         <small>${escapeHtml(q.comp)} · ${escapeHtml(q.cont || '')}</small>
         <div class="linha-botoes">
@@ -1129,13 +1346,17 @@ function aplicarFiltroBancoQuestoes() {
     busca: document.getElementById('filtro-q-busca').value.trim(),
     comp: document.getElementById('filtro-q-comp').value.trim(),
     tipo: document.getElementById('filtro-q-tipo').value,
-    banca: document.getElementById('filtro-q-banca').value.trim()
+    banca: document.getElementById('filtro-q-banca').value.trim(),
+    bloomLevel: document.getElementById('filtro-q-bloom').value,
+    dimensaoConhecimento: document.getElementById('filtro-q-dimensao').value,
+    ano: document.getElementById('filtro-q-ano').value.trim(),
+    unidadeTematica: document.getElementById('filtro-q-unidade').value
   };
   window._bancoQuestoesFiltrado = true;
   renderBancoQuestoes(1);
 }
 function limparFiltroBancoQuestoes() {
-  window._filtrosBancoQuestoes = { busca: '', tipo: '', comp: '', banca: '' };
+  window._filtrosBancoQuestoes = { busca: '', tipo: '', comp: '', banca: '', bloomLevel: '', dimensaoConhecimento: '', ano: '', unidadeTematica: '' };
   window._bancoQuestoesFiltrado = false;
   renderBancoQuestoes(1);
 }
@@ -1153,14 +1374,34 @@ async function _modalFormQuestao(q) {
     <select id="input-q-tipo" onchange="_atualizarEditorTipo()">
       ${TIPOS_QUESTAO_OPCOES.map(t => `<option value="${t}" ${t === tipoAtual ? 'selected' : ''}>${LABELS_TIPO[t]}</option>`).join('')}
     </select>
-    <label>Componente</label>${renderSelectComponente('input-q-comp', (q && q.comp) || '')}
+    <label>Componente</label>${renderSelectComponente('input-q-comp', (q && q.comp) || '', false, '_atualizarCampoUnidadeTematica()')}
     <label>Conteúdo</label><input id="input-q-cont" value="${escapeHtml((q && q.cont) || '')}">
-    <label>Nível de Bloom</label>
-    <select id="input-q-bloom">
-      <option value="">Não classificado</option>
-      ${Object.keys(LABELS_BLOOM).map(k => `<option value="${k}" ${q && q.bloomLevel === k ? 'selected' : ''}>${LABELS_BLOOM[k]}</option>`).join('')}
-    </select>
-    <button type="button" class="btn btn-texto btn-pequeno" onclick="pedirSugestaoClassificacao()">✨ Sugerir com IA</button>
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;">
+        <label>Ano/Série</label>
+        <input id="input-q-ano" list="lista-anos-serie-form" value="${escapeHtml((q && q.ano) || '')}" placeholder="Ex: 8º ano EF">
+        <datalist id="lista-anos-serie-form">${ANOS_SERIE_SUGESTOES.map(a => `<option value="${a}">`).join('')}</datalist>
+      </div>
+      <div style="flex:1;" id="campo-unidade-tematica-wrap">${_htmlCampoUnidadeTematica((q && q.comp) || '', (q && q.unidadeTematica) || '')}</div>
+    </div>
+    <p style="font-size:0.8rem;color:var(--cinza-texto);margin:14px 0 4px;"><strong>Classificação pedagógica</strong> (Taxonomia de Bloom Revisada — Anderson &amp; Krathwohl, 2001) — visível só pra você, nunca pro aluno.</p>
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;">
+        <label>Nível de Bloom (processo cognitivo)</label>
+        <select id="input-q-bloom">
+          <option value="">Não classificado</option>
+          ${Object.keys(LABELS_BLOOM).map(k => `<option value="${k}" ${q && q.bloomLevel === k ? 'selected' : ''}>${LABELS_BLOOM[k]}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex:1;">
+        <label>Dimensão do Conhecimento</label>
+        <select id="input-q-dimensao">
+          <option value="">Não classificada</option>
+          ${DIMENSOES_CONHECIMENTO_OPCOES.map(d => `<option value="${d}" ${q && q.dimensaoConhecimento === d ? 'selected' : ''}>${d}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <button type="button" class="btn btn-texto btn-pequeno" onclick="pedirSugestaoClassificacao()">✨ Sugerir com IA (Bloom + Dimensão)</button>
     <label>Enunciado</label><textarea id="input-q-text" class="campo-matematico">${escapeHtml((q && q.text) || '')}</textarea>
     ${renderToolbarMatematica()}
     <label>Imagens do enunciado</label>
@@ -1173,9 +1414,15 @@ async function _modalFormQuestao(q) {
     <label>Imagens da resolução</label>
     <input type="file" accept="image/*" onchange="adicionarImagem(this, 'resolucao')">
     <div id="preview-imagens-resolucao">${_previewImagens(window._imagensResolucaoAtual, 'resolucao')}</div>
+    <label style="margin-top:14px;">Objetivo de aprendizagem (opcional — aparece pro aluno junto da resolução)</label>
+    <p style="font-size:0.8rem;color:var(--cinza-texto);margin:0 0 6px;">Frase curta do tipo "o que essa questão queria que o aluno demonstrasse" — ex: "Entender por que uma equação do 2º grau precisa estar na forma reduzida, com a ≠ 0". Pra Matemática, pode copiar direto da Matriz de Objetivos de Aprendizagem. Fica visível só depois que o aluno entrega E você libera a resolução — nunca antes.</p>
+    <textarea id="input-q-objetivo" class="campo-matematico">${escapeHtml((q && q.objetivoAprendizagem) || '')}</textarea>
+    <div id="secao-pre-requisitos" style="margin-top:14px;">${_htmlSecaoPreRequisitos()}</div>
     <button class="btn btn-primario btn-full" onclick="salvarQuestao(${q ? `'${q.id}'` : 'null'})">Salvar</button>`);
   window._questaoEditando = q;
+  window._preRequisitosAtuais = null;
   _atualizarEditorTipo();
+  if (q && q.comp && q.cont) _carregarPreRequisitosDoConteudo();
 }
 
 function _previewImagens(lista, grupo) {
@@ -1238,6 +1485,24 @@ function _atualizarEditorTipo() {
   document.getElementById('editor-tipo-especifico').innerHTML = renderEditorPorTipo(tipo, q && q.tipo === tipo ? q : {});
 }
 
+/** Campo "Unidade Temática": vira <select> de vocabulário fechado quando o componente tem BNCC mapeada (ver UNIDADES_TEMATICAS_POR_COMPONENTE), senão fica texto livre. */
+function _htmlCampoUnidadeTematica(componente, valorAtual) {
+  const opcoes = unidadesTematicasDoComponente(componente);
+  if (opcoes.length === 0) {
+    return `<label>Unidade Temática</label>
+      <input id="input-q-unidade" value="${escapeHtml(valorAtual || '')}" placeholder="Sem vocabulário BNCC fechado pra este componente ainda">`;
+  }
+  return `<label>Unidade Temática (BNCC)</label>
+    <select id="input-q-unidade">
+      <option value="">Não se aplica</option>
+      ${opcoes.map(u => `<option value="${u}" ${valorAtual === u ? 'selected' : ''}>${u}</option>`).join('')}
+    </select>`;
+}
+function _atualizarCampoUnidadeTematica() {
+  const componente = document.getElementById('input-q-comp').value;
+  document.getElementById('campo-unidade-tematica-wrap').innerHTML = _htmlCampoUnidadeTematica(componente, '');
+}
+
 async function pedirSugestaoClassificacao() {
   const componente = document.getElementById('input-q-comp').value;
   const conteudo = document.getElementById('input-q-cont').value;
@@ -1245,7 +1510,79 @@ async function pedirSugestaoClassificacao() {
   if (!componente || !enunciado) { toast('Preencha componente e enunciado primeiro.', 'erro'); return; }
   const sugestao = await chamarComLoading('ia.sugerirClassificacao', { componente, conteudo, enunciado });
   document.getElementById('input-q-bloom').value = sugestao.bloomLevel;
-  toast('Pré-requisitos sugeridos pela IA: ' + sugestao.preRequisitosSugeridos.join(', ') + ' (sugestão informativa — o cadastro formal de pré-requisitos ainda não tem tela própria nesta versão).', 'sucesso');
+  if (sugestao.dimensaoConhecimento) document.getElementById('input-q-dimensao').value = sugestao.dimensaoConhecimento;
+  window._preRequisitosAtuais = sugestao.preRequisitosSugeridos || [];
+  _renderSecaoPreRequisitos();
+  toast('Nível de Bloom, Dimensão do Conhecimento e pré-requisitos sugeridos pela IA — revise tudo antes de salvar (os pré-requisitos aparecem na seção abaixo do formulário; clique em "Salvar pré-requisitos" pra confirmá-los).', 'sucesso');
+}
+
+// ---------- Pré-requisitos do conteúdo (Ausubel) — editados direto no cadastro de questão ----------
+
+function _htmlSecaoPreRequisitos() {
+  return `<label>Pré-requisitos deste conteúdo (Ausubel — o que o aluno precisa já saber antes)</label>
+    <p style="font-size:0.8rem;color:var(--cinza-texto);margin:0 0 6px;">Alimenta o diagnóstico automático: quando o aluno erra este conteúdo, o sistema compara com o desempenho nesses pré-requisitos pra sugerir se é lacuna de base ou dificuldade específica. Vale pra TODAS as questões deste componente+conteúdo, não só esta.</p>
+    <div id="pre-requisitos-chips">${_htmlChipsPreRequisitos()}</div>
+    <div style="display:flex;gap:6px;margin-top:6px;">
+      <input id="input-novo-prereq" placeholder="Nome curto do pré-requisito (ex: Equações do 1º grau)" style="flex:1;">
+      <button type="button" class="btn btn-secundario btn-pequeno" onclick="_adicionarPreRequisitoChip()">+ Adicionar</button>
+    </div>
+    <div class="linha-botoes" style="margin-top:6px;">
+      <button type="button" class="btn btn-texto btn-pequeno" onclick="_carregarPreRequisitosDoConteudo()">🔄 Carregar deste conteúdo</button>
+      <button type="button" class="btn btn-texto btn-pequeno" onclick="_salvarPreRequisitosConteudo()">💾 Salvar pré-requisitos</button>
+    </div>`;
+}
+
+function _htmlChipsPreRequisitos() {
+  const itens = window._preRequisitosAtuais;
+  if (itens === null || itens === undefined) {
+    return '<p style="font-size:0.8rem;color:var(--cinza-texto);">Clique em "Carregar deste conteúdo" pra ver se já existem pré-requisitos salvos.</p>';
+  }
+  if (itens.length === 0) return '<p style="font-size:0.8rem;color:var(--cinza-texto);">Nenhum pré-requisito ainda — adicione abaixo ou use "✨ Sugerir com IA".</p>';
+  return itens.map((p, i) => `
+    <span class="badge badge-info" style="margin:2px;">${escapeHtml(p)}
+      <button type="button" onclick="_removerPreRequisitoChip(${i})" style="border:none;background:none;color:inherit;cursor:pointer;margin-left:4px;">×</button>
+    </span>`).join('');
+}
+
+function _renderSecaoPreRequisitos() {
+  document.getElementById('secao-pre-requisitos').innerHTML = _htmlSecaoPreRequisitos();
+}
+
+function _adicionarPreRequisitoChip() {
+  const input = document.getElementById('input-novo-prereq');
+  const valor = input.value.trim();
+  if (!valor) return;
+  window._preRequisitosAtuais = window._preRequisitosAtuais || [];
+  if (!window._preRequisitosAtuais.includes(valor)) window._preRequisitosAtuais.push(valor);
+  input.value = '';
+  _renderSecaoPreRequisitos();
+  document.getElementById('input-novo-prereq').focus();
+}
+
+function _removerPreRequisitoChip(i) {
+  window._preRequisitosAtuais.splice(i, 1);
+  _renderSecaoPreRequisitos();
+}
+
+async function _carregarPreRequisitosDoConteudo() {
+  const componente = document.getElementById('input-q-comp').value;
+  const conteudo = document.getElementById('input-q-cont').value;
+  if (!componente || !conteudo) { toast('Preencha componente e conteúdo primeiro.', 'erro'); return; }
+  const dados = await chamarComLoading('diagnostico.listarPreRequisitos', { componente });
+  const item = dados.itens.find(p => p.conteudo === conteudo);
+  window._preRequisitosAtuais = item ? item.preRequisitosDe : [];
+  _renderSecaoPreRequisitos();
+  toast(item ? 'Pré-requisitos carregados.' : 'Nenhum pré-requisito salvo ainda pra este conteúdo — adicione abaixo.', 'sucesso');
+}
+
+async function _salvarPreRequisitosConteudo() {
+  const componente = document.getElementById('input-q-comp').value;
+  const conteudo = document.getElementById('input-q-cont').value;
+  if (!componente || !conteudo) { toast('Preencha componente e conteúdo primeiro.', 'erro'); return; }
+  await chamarComLoading('diagnostico.salvarPreRequisito', {
+    componente, conteudo, preRequisitosDe: window._preRequisitosAtuais || [], origem: 'professor'
+  });
+  toast('Pré-requisitos salvos pra "' + conteudo + '".', 'sucesso');
 }
 
 async function salvarQuestao(id) {
@@ -1253,8 +1590,11 @@ async function salvarQuestao(id) {
   const { alternativas, gabarito } = coletarDadosEditorPorTipo(tipo);
   const dados = {
     tipo, comp: document.getElementById('input-q-comp').value, cont: document.getElementById('input-q-cont').value,
-    bloomLevel: document.getElementById('input-q-bloom').value, text: document.getElementById('input-q-text').value,
+    ano: document.getElementById('input-q-ano').value.trim(), unidadeTematica: document.getElementById('input-q-unidade').value,
+    bloomLevel: document.getElementById('input-q-bloom').value, dimensaoConhecimento: document.getElementById('input-q-dimensao').value,
+    text: document.getElementById('input-q-text').value,
     resolucao: document.getElementById('input-q-resolucao').value, alternativas, gabarito,
+    objetivoAprendizagem: document.getElementById('input-q-objetivo').value,
     imagens: window._imagensQuestaoAtual || [], resolucaoImagens: window._imagensResolucaoAtual || []
   };
   try {
@@ -1270,30 +1610,30 @@ async function excluirQuestao(id) {
 }
 
 const MODELO_JSON_QUESTOES = [
-  { tipo: 'multipla', comp: 'Matemática', cont: 'Frações', text: 'Quanto é 1/2 + 1/4?',
+  { tipo: 'multipla', comp: 'Matemática', cont: 'Frações', ano: '6º ano EF', unidadeTematica: 'Números', text: 'Quanto é 1/2 + 1/4?',
     alternativas: { A: '1/2', B: '3/4', C: '1', D: '2/4', E: '1/4' }, gabarito: 'B',
-    bloomLevel: 'aplicar', resolucao: '1/2 = 2/4, então 2/4 + 1/4 = 3/4.' },
+    bloomLevel: 'aplicar', dimensaoConhecimento: 'Procedimental', resolucao: '1/2 = 2/4, então 2/4 + 1/4 = 3/4.' },
   { tipo: 'vf', comp: 'Ciências', cont: 'Água', text: 'Classifique as afirmações:',
     alternativas: [{ id: 'af1', texto: 'A água ferve a 100°C no nível do mar.' }, { id: 'af2', texto: 'O gelo é mais denso que a água líquida.' }],
-    gabarito: { af1: true, af2: false }, bloomLevel: 'lembrar',
+    gabarito: { af1: true, af2: false }, bloomLevel: 'lembrar', dimensaoConhecimento: 'Factual',
     resolucao: 'Ao nível do mar (1 atm), a água ferve a 100°C — verdadeiro. O gelo é MENOS denso que a água líquida (por isso flutua) — falso.' },
   { tipo: 'relacione', comp: 'Geografia', cont: 'Capitais', text: 'Relacione o país à capital:',
     alternativas: { colunaA: [{ id: 'a1', texto: 'Brasil' }, { id: 'a2', texto: 'França' }], colunaB: [{ id: 'b1', texto: 'Brasília' }, { id: 'b2', texto: 'Paris' }] },
-    gabarito: { a1: 'b1', a2: 'b2' }, bloomLevel: 'entender',
+    gabarito: { a1: 'b1', a2: 'b2' }, bloomLevel: 'entender', dimensaoConhecimento: 'Conceitual',
     resolucao: 'Brasília é a capital do Brasil desde 1960; Paris é a capital da França.' },
   { tipo: 'classifique', comp: 'Biologia', cont: 'Ecologia', text: 'Ordene do menor para o maior nível organizacional:',
     alternativas: [{ id: 'i1', texto: 'Célula' }, { id: 'i2', texto: 'Tecido' }, { id: 'i3', texto: 'Órgão' }],
-    gabarito: ['i1', 'i2', 'i3'], bloomLevel: 'analisar',
+    gabarito: ['i1', 'i2', 'i3'], bloomLevel: 'analisar', dimensaoConhecimento: 'Conceitual',
     resolucao: 'A hierarquia biológica vai de células (unidade básica) a tecidos (grupos de células) a órgãos (grupos de tecidos).' },
   { tipo: 'ordenar', comp: 'História', cont: 'Linha do tempo', text: 'Ordene cronologicamente:',
     alternativas: [{ id: 'e1', texto: 'Proclamação da República' }, { id: 'e2', texto: 'Independência do Brasil' }],
-    gabarito: ['e2', 'e1'], bloomLevel: 'analisar',
+    gabarito: ['e2', 'e1'], bloomLevel: 'analisar', dimensaoConhecimento: 'Factual',
     resolucao: 'A Independência do Brasil ocorreu em 1822; a Proclamação da República, em 1889 — quase 70 anos depois.' },
   { tipo: 'lacunas', comp: 'Português', cont: 'Gramática', text: 'O {{1}} concorda em gênero e número com o {{2}}.',
-    alternativas: 'O {{1}} concorda em gênero e número com o {{2}}.', gabarito: { '1': ['adjetivo'], '2': ['substantivo'] }, bloomLevel: 'entender',
+    alternativas: 'O {{1}} concorda em gênero e número com o {{2}}.', gabarito: { '1': ['adjetivo'], '2': ['substantivo'] }, bloomLevel: 'entender', dimensaoConhecimento: 'Conceitual',
     resolucao: 'Regra de concordância nominal: o adjetivo se flexiona para concordar em gênero (masculino/feminino) e número (singular/plural) com o substantivo a que se refere.' },
   { tipo: 'discursiva', comp: 'Redação', cont: 'Argumentação', text: 'Explique, com suas palavras, a importância da reciclagem.',
-    alternativas: null, gabarito: null, bloomLevel: 'avaliar',
+    alternativas: null, gabarito: null, bloomLevel: 'avaliar', dimensaoConhecimento: 'Metacognitivo',
     resolucao: 'Não tem gabarito fixo — sirva de referência pro professor/IA avaliar: a resposta deve citar ao menos a redução de resíduos e a economia de recursos naturais.' }
 ];
 
@@ -1359,7 +1699,7 @@ async function confirmarImportarVestibular() {
     ${window._questoesVestibularPreview.map((q, i) => `
       <div class="card">
         <label class="alternativa"><input type="checkbox" checked onchange="window._questoesVestibularPreview[${i}].incluir=this.checked"><span>${formatarTextoQuestao(q.text).slice(0, 150)}...</span></label>
-        <small>${escapeHtml(q.comp)} · Gabarito: ${escapeHtml(q.gabarito)} · ${escapeHtml(LABELS_BLOOM[q.bloomLevel] || '')} · ${q.resolucao ? '✓ resolução extraída' : 'sem resolução no arquivo'}</small>
+        <small>${escapeHtml(q.comp)} · Gabarito: ${escapeHtml(q.gabarito)} · ${escapeHtml(LABELS_BLOOM[q.bloomLevel] || '')}${q.dimensaoConhecimento ? ' · ' + escapeHtml(q.dimensaoConhecimento) : ''} · ${q.resolucao ? '✓ resolução extraída' : 'sem resolução no arquivo'}</small>
         <div style="margin-top:6px;"><button type="button" class="btn btn-pequeno btn-secundario" onclick="abrirVisualizacaoQuestao(window._questoesVestibularPreview[${i}])">👁 Ver questão completa</button></div>
       </div>`).join('')}
     <button class="btn btn-sucesso btn-full" onclick="confirmarSalvarVestibular()">Salvar questões selecionadas</button>`;
@@ -1442,9 +1782,18 @@ async function verDiagnosticoTurma() {
       ${a.diagnostico.map(d => `
         <div class="lista-item">
           <span>${escapeHtml(d.conteudo)}</span>
-          <span class="badge badge-info">${textoHipotese[d.hipotese] || d.hipotese}</span>
+          <span>${d.hipotese !== 'indeterminado' ? `<span class="badge badge-info">${textoHipotese[d.hipotese] || d.hipotese}</span>` : ''}${_htmlHipoteseDimensao(d.hipoteseDimensao)}</span>
         </div>`).join('')}
     </div>`).join('') + `<p style="font-size:0.8rem;color:var(--cinza-texto);">Hipótese estatística baseada em padrão de erro — não é um diagnóstico exato.</p>`;
+}
+
+/** Badge da 3ª hipótese de diagnóstico (comparação de desempenho entre Dimensões do Conhecimento do mesmo conteúdo). */
+function _htmlHipoteseDimensao(hd) {
+  if (!hd) return '';
+  const pct = v => Math.round(v * 100) + '%';
+  return ` <span class="badge badge-atencao" title="Desempenho por Dimensão do Conhecimento neste conteúdo">
+    🔍 Mais fraco em ${escapeHtml(hd.dimensaoMaisFraca)} (${pct(hd.percentualMaisFraca)}) que em ${escapeHtml(hd.dimensaoMaisForte)} (${pct(hd.percentualMaisForte)})
+  </span>`;
 }
 
 // ======================================================================
@@ -1489,6 +1838,21 @@ const GUIA_CLASSIFICACAO_HTML = `
   <li>Esse campo é o que alimenta o relatório de Diagnóstico da turma — sem ele, o sistema não consegue apontar em qual nível cognitivo os alunos estão com mais dificuldade.</li>
 </ul>
 
+<h4>1.4 A Dimensão do Conhecimento (o outro eixo da Taxonomia)</h4>
+<p>A formulação original de Anderson &amp; Krathwohl (2001) não é uma lista de 6 níveis — é uma <strong>matriz bidimensional</strong>: o nível cognitivo (seção 1, acima) cruzado com a <strong>Dimensão do Conhecimento</strong>, o TIPO de conhecimento que a questão mobiliza. Desde 2026, o AppMaximo também classifica esse segundo eixo, no campo "Dimensão do Conhecimento" do cadastro de questão (junto do botão "✨ Sugerir com IA", que agora sugere os dois eixos de uma vez).</p>
+<table>
+  <tr><th>Dimensão</th><th>Definição</th><th>Exemplo</th></tr>
+  <tr><td>Factual</td><td>Fatos isolados, terminologia, símbolos — dados soltos e desconectados.</td><td>O símbolo químico do ferro; a data de um evento histórico.</td></tr>
+  <tr><td>Conceitual</td><td>Relações entre ideias, princípios, classificações, generalizações.</td><td>Por que uma fórmula funciona; como dois conceitos se relacionam.</td></tr>
+  <tr><td>Procedimental</td><td>"Como fazer" — algoritmos, técnicas, método passo a passo.</td><td>Como resolver uma equação; como executar uma construção geométrica.</td></tr>
+  <tr><td>Metacognitivo</td><td>Reflexão sobre a própria estratégia de raciocínio; autoavaliação; julgamento sobre um processo ou planejamento de algo novo.</td><td>Avaliar se a estratégia usada foi a mais eficiente; propor um método próprio.</td></tr>
+</table>
+<p>Na prática, cada nível de Bloom tende a puxar pra uma dimensão predominante (isso é só um ponto de partida, ajustável conforme o conteúdo): <strong>Lembrar→Factual · Entender→Conceitual · Aplicar→Procedimental · Analisar→Conceitual · Avaliar→Metacognitivo · Criar→Metacognitivo</strong>.</p>
+<p>Essa classificação é um metadado de bastidor: aparece só pra você (professor) — no banco de questões, no formulário de cadastro, ao "observar" uma lista já criada e no relatório de detalhes da lista — o aluno nunca vê a Dimensão do Conhecimento nem a Unidade Temática de uma questão.</p>
+<p>Pra Matemática, do 6º ano do Fundamental II à 3ª série do Ensino Médio, já existe uma referência pronta: a <strong>"Matriz de Objetivos de Aprendizagem — Matemática"</strong>, uma planilha com um objetivo de aprendizagem para cada conteúdo × nível de Bloom × dimensão do conhecimento, alinhada à BNCC. Use-a como inspiração de fraseado ao classificar (ou ao pedir pra IA gerar) questões desses conteúdos.</p>
+<p>Os filtros do banco de questões (Nível de Bloom, Dimensão do Conhecimento, Ano/Série e Unidade Temática) usam exatamente esses campos — por isso vale preenchê-los mesmo quando parecer redundante: é o que permite, por exemplo, montar rapidamente uma lista só com questões de "Analisar" sobre "Geometria" do 8º ano.</p>
+<p class="fonte">Fonte: Anderson, L. W., &amp; Krathwohl, D. R. (Eds.) (2001). A Taxonomy for Learning, Teaching, and Assessing. Longman.</p>
+
 <h4>2. Identificando pré-requisitos ("subsunções")</h4>
 <p>O AppMaximo usa o termo "pré-requisito" pra descrever o que Ausubel chamava de subsunção: um conteúdo só é aprendido de forma significativa quando se conecta a algo que o aluno já sabe. Se essa base ("subsunçor") não existe ou está frágil, o aluno tende a memorizar o conteúdo novo sem realmente compreendê-lo — e o erro nas provas costuma aparecer não no conteúdo atual, mas nessa base que faltou.</p>
 <blockquote>"A aprendizagem envolve a reorganização das estruturas cognitivas existentes" — o conhecimento novo precisa se ligar ativamente a ideias já estabelecidas, não é construído do zero. (Ausubel, Teoria da Assimilação)</blockquote>
@@ -1526,10 +1890,11 @@ const GUIA_CLASSIFICACAO_HTML = `
 <h4>Checklist rápido ao cadastrar uma questão</h4>
 <ul>
   <li>1. Componente e Conteúdo preenchidos com nomes consistentes (use sempre a mesma grafia — "Frações" e "frações" contam como conteúdos diferentes pro sistema).</li>
-  <li>2. Nível de Bloom escolhido (use o botão de sugestão da IA como ponto de partida, mas revise).</li>
+  <li>2. Nível de Bloom E Dimensão do Conhecimento escolhidos (use o botão de sugestão da IA como ponto de partida, mas revise os dois).</li>
   <li>3. Se o conteúdo tiver um pré-requisito claro, anote-o (mesmo que hoje seja só numa lista sua, até a tela de cadastro formal existir).</li>
   <li>4. Gabarito conferido — principalmente em Relacione, Classifique e Ordenar, onde é fácil errar a ordem/pareamento.</li>
   <li>5. Resolução (explicação) preenchida quando possível — ela é o que mais ajuda o aluno quando você libera a correção.</li>
+  <li>6. Pra Matemática, considere preencher também Ano/Série e Unidade Temática — são os campos que alimentam os filtros novos do banco de questões.</li>
 </ul>
 
 <h4>Referências</h4>
@@ -1538,6 +1903,9 @@ const GUIA_CLASSIFICACAO_HTML = `
 <p>Ausubel, D. P. (1962/1968). Subsumption Theory / Educational Psychology: A Cognitive View. Resumo consultado em InstructionalDesign.org.</p>
 <p>Doignon, J.-P., &amp; Falmagne, J.-C. (1999). Knowledge Spaces. Springer.</p>
 <p>Luckesi, C. C. (2018). Avaliação da Aprendizagem: Componente do Ato Pedagógico. Cortez. Referência secundária consultada via "A avaliação como um instrumento diagnóstico: uma reflexão sobre a prática docente", Cadernos de Graduação (periodicos.set.edu.br).</p>
+<p>Mager, R. F. (1962). Preparing Instructional Objectives. Fearon Publishers.</p>
+<p>Trevisan, A. L., &amp; Amaral, R. B. (2016). A Taxionomia revisada de Bloom aplicada à avaliação: um estudo de provas escritas de Matemática. Ciência &amp; Educação (Bauru), 22(2).</p>
+<p>Base Nacional Comum Curricular (BNCC) — Matemática, Ensino Fundamental e Ensino Médio. MEC, 2018. E Currículo Paulista, usado como referência pra distribuição das habilidades do Ensino Médio por série.</p>
 `;
 
 // ======================================================================
