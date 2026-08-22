@@ -669,18 +669,24 @@ async function exportarListaPdf(listaId) {
 
   const area = document.createElement('div');
   area.id = 'area-lista-pdf-tmp';
-  area.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:white;padding:4px;';
+  // IMPORTANTE: fica DENTRO dos limites do viewport (top:0/left:0) — coordenada negativa
+  // (ex: left:-9999px) fazia o html2canvas gerar PDF em branco em alguns navegadores, porque ele
+  // clona a página baseado na área visível da janela. Fica coberto pelo overlay de loading
+  // (z-index maior) enquanto renderiza, então o professor só vê o spinner, não o conteúdo "piscando".
+  area.style.cssText = 'position:fixed;top:0;left:0;width:800px;background:white;padding:4px;z-index:1;';
   area.innerHTML = _cabecalhoExportacaoLista({ ...dados.lista, componentes: listaCompleta.componentes }) +
     dados.questoes.map((q, i) => renderResponderQuestao(q, i)).join('');
   document.body.appendChild(area);
   area.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
 
+  mostrarLoading();
   const nomeArquivo = `${(dados.lista.titulo || 'lista').replace(/[^\w\s-]/g, '')} - gabarito.pdf`;
   try {
-    await html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
+    await html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2, windowWidth: 800, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
   } catch (e) {
     toast('Não foi possível gerar o PDF agora. Tente de novo.', 'erro');
   } finally {
+    esconderLoading();
     area.remove();
   }
 }
