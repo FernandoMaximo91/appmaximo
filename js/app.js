@@ -744,14 +744,18 @@ async function abrirQuestoesDaLista(listaId) {
   document.querySelectorAll('#modal-box input, #modal-box select, #modal-box textarea').forEach(el => { el.disabled = true; });
 }
 
-/** Cabeçalho de marca do AppMaximo pra exportação de listas em PDF pelo professor (questões + gabarito + resolução). */
-function _cabecalhoExportacaoLista(lista) {
+/** Cabeçalho de marca do AppMaximo pra exportação de listas em PDF pelo professor (questões + gabarito + resolução).
+ * nomeContexto identifica de onde a lista vem (nome da turma, ou "Modelo salvo" pra um modelo da
+ * Biblioteca que ainda não foi usado em nenhuma turma) — default ao nome da turma atual, pra não
+ * quebrar quem já chamava isto de dentro de uma turma. */
+function _cabecalhoExportacaoLista(lista, nomeContexto) {
   const agora = new Date().toLocaleDateString('pt-BR');
+  const contexto = nomeContexto || (turmaAtualDetalhe && turmaAtualDetalhe.nome) || '';
   return `<div style="background:linear-gradient(135deg,var(--azul-escuro),var(--azul));color:white;padding:20px 24px;border-radius:10px;margin-bottom:18px;">
     <div style="font-size:1.4rem;font-weight:800;">📘 AppMaximo</div>
     <div style="font-size:1.15rem;font-weight:700;margin-top:10px;">${escapeHtml(lista.titulo)}</div>
     <div style="font-size:0.85rem;opacity:0.92;margin-top:6px;line-height:1.5;">
-      ${escapeHtml(turmaAtualDetalhe.nome)}${(lista.componentes || []).length ? ' · ' + escapeHtml(lista.componentes.join(', ')) : ''}<br>
+      ${escapeHtml(contexto)}${(lista.componentes || []).length ? ' · ' + escapeHtml(lista.componentes.join(', ')) : ''}<br>
       Questões · gabarito e resolução comentada no final · gerado em ${agora} por ${escapeHtml(sessaoLocal.nome)}
     </div>
   </div>`;
@@ -1391,10 +1395,56 @@ async function renderListasModelo(busca, componente) {
           <small>${(m.componentes || []).map(c => escapeHtml(c)).join(', ')} · ${m.totalQuestoes} questões${m.cronometroMin ? ' · ⏱ ' + m.cronometroMin + ' min' : ''}</small><br>
           ${(m.conteudos || []).length ? `<div style="margin-top:6px;">${m.conteudos.map(c => `<span class="badge badge-info">${escapeHtml(c)}</span>`).join(' ')}</div>` : ''}
           <div class="linha-botoes">
+            <button class="btn btn-pequeno btn-secundario" onclick="abrirQuestoesModelo('${m.id}')">👁 Ver questões</button>
+            <button class="btn btn-pequeno btn-secundario" onclick="exportarModeloPdf('${m.id}')">📄 Baixar PDF</button>
             <button class="btn btn-pequeno btn-primario" onclick="abrirModalUsarModelo('${m.id}', '${escapeHtml(m.titulo).replace(/'/g, "\\'")}')">▶ Usar numa turma</button>
             <button class="btn btn-pequeno btn-perigo" onclick="excluirModeloLista('${m.id}', '${escapeHtml(m.titulo).replace(/'/g, "\\'")}')">Excluir</button>
           </div>
         </div>`).join('')}`;
+}
+
+/** Mostra as questões de um modelo salvo (com gabarito/resolução) — igual "Ver questões" de uma
+ * lista dentro de turma, mas o modelo não pertence a turma nenhuma. */
+async function abrirQuestoesModelo(modeloId) {
+  const dados = await chamarComLoading('listasModelo.verQuestoes', { modeloId });
+  abrirModal(`<h3>👁 ${escapeHtml(dados.modelo.titulo)}</h3>
+    ${dados.questoes.map((q, i) => `
+      <div style="margin-bottom:4px;">
+        ${q.bloomLevel ? `<span class="badge badge-info">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
+        ${q.dimensaoConhecimento ? `<span class="badge badge-info">${escapeHtml(q.dimensaoConhecimento)}</span>` : ''}
+      </div>
+      ${renderResponderQuestao(q, i)}`).join('')}
+    <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
+  document.querySelectorAll('#modal-box input, #modal-box select, #modal-box textarea').forEach(el => { el.disabled = true; });
+}
+
+/** Baixa o PDF (questões + gabarito/resolução no final) de um modelo salvo, sem precisar
+ * reaproveitá-lo numa turma primeiro — mesmo formato/cabeçalho de exportarListaPdf, só que o
+ * "contexto" no cabeçalho é "Modelo salvo" em vez do nome de uma turma. */
+async function exportarModeloPdf(modeloId) {
+  if (typeof html2pdf === 'undefined') { toast('Não foi possível gerar o PDF agora. Tente de novo em alguns segundos.', 'erro'); return; }
+  const dados = await chamarComLoading('listasModelo.verQuestoes', { modeloId });
+
+  const area = document.createElement('div');
+  area.id = 'area-modelo-pdf-tmp';
+  area.className = 'pdf-export-area';
+  area.style.cssText = 'width:800px;background:white;padding:4px;';
+  area.innerHTML = _cabecalhoExportacaoLista(dados.modelo, 'Modelo salvo (Biblioteca de Listas Salvas)') +
+    dados.questoes.map((q, i) => renderResponderQuestao(q, i, true)).join('') +
+    _secaoGabaritoExportacao(dados.questoes);
+  mostrarLoading();
+  document.body.appendChild(area);
+  area.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+
+  const nomeArquivo = `${(dados.modelo.titulo || 'lista').replace(/[^\w\s-]/g, '')} - gabarito.pdf`;
+  try {
+    await html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
+  } catch (e) {
+    toast('Não foi possível gerar o PDF agora. Tente de novo.', 'erro');
+  } finally {
+    esconderLoading();
+    area.remove();
+  }
 }
 
 function _filtrarListasModelo() {
@@ -2286,48 +2336,31 @@ const GUIA_CLASSIFICACAO_HTML = `
 <p style="color:var(--cinza-texto);font-style:italic;">Como cadastrar e classificar questões por nível cognitivo (Taxonomia de Bloom) e por pré-requisito de conteúdo.</p>
 <p>Este guia traduz três referências acadêmicas em passos práticos pro cadastro de questões: a Taxonomia de Bloom Revisada (pra classificar o nível cognitivo exigido por cada questão), a Teoria da Aprendizagem Significativa de Ausubel (pra identificar os pré-requisitos de um conteúdo) e a concepção de avaliação diagnóstica de Luckesi (pra entender como o sistema usa essas classificações pra apontar hipóteses de dificuldade).</p>
 
-<h4>1. Classificando pelo nível cognitivo (Taxonomia de Bloom Revisada)</h4>
-<p>A Taxonomia de Bloom Revisada (Anderson &amp; Krathwohl, 2001) organiza o que se pede numa questão em seis processos cognitivos, do mais simples ao mais complexo. É esse o campo "Nível de Bloom" que aparece no cadastro de questão.</p>
+<h4>1. Classificando cada questão: nível de Bloom + Dimensão do Conhecimento</h4>
+<p>Toda questão tem dois eixos de classificação, independentes entre si (Anderson &amp; Krathwohl, 2001): <strong>o que o aluno precisa FAZER</strong> (nível de Bloom) e <strong>que TIPO de conhecimento</strong> ele usa pra fazer isso (Dimensão do Conhecimento). Pra classificar rápido, pergunte as duas coisas sobre o comando da questão: o VERBO principal indica o nível; a natureza do conteúdo por trás dele indica a dimensão.</p>
 <table>
-  <tr><th>Nível</th><th>Definição</th><th>Verbos típicos</th><th>Exemplo</th></tr>
-  <tr><td>Lembrar</td><td>Recuperar um fato ou informação já vista, sem precisar entender ou usar.</td><td>listar, nomear, identificar, definir, reconhecer</td><td>"Qual é a capital do Brasil?"</td></tr>
-  <tr><td>Entender</td><td>Explicar uma ideia com as próprias palavras; interpretar, comparar, resumir.</td><td>explicar, interpretar, resumir, comparar, exemplificar</td><td>"Explique por que a água ferve mais rápido em altitude elevada."</td></tr>
-  <tr><td>Aplicar</td><td>Usar um procedimento ou conceito já conhecido numa situação nova, mas do mesmo tipo já treinado.</td><td>calcular, resolver, aplicar, demonstrar, usar</td><td>"Calcule a área de um terreno retangular de 12m por 8m."</td></tr>
-  <tr><td>Analisar</td><td>Quebrar a informação em partes e entender como elas se relacionam ou por que algo funciona.</td><td>comparar, categorizar, diferenciar, examinar, decompor</td><td>"Compare as causas econômicas e sociais da Revolução Industrial."</td></tr>
-  <tr><td>Avaliar</td><td>Julgar algo com base em critérios definidos, com justificativa.</td><td>julgar, criticar, justificar, avaliar, defender</td><td>"A solução apresentada pelo colega está correta? Justifique."</td></tr>
-  <tr><td>Criar</td><td>Combinar elementos pra produzir algo novo — um plano, um argumento, uma solução original.</td><td>elaborar, propor, criar, planejar, formular</td><td>"Elabore uma proposta de intervenção para reduzir o desperdício de água na escola."</td></tr>
+  <tr><th>Nível (verbo)</th><th>O aluno precisa...</th><th>Dimensão predominante</th><th>Exemplo</th></tr>
+  <tr><td><strong>Lembrar</strong><br>listar, nomear, definir</td><td>recuperar um fato já visto, sem interpretar</td><td>Factual — dado isolado, terminologia</td><td>"Qual é a capital do Brasil?"</td></tr>
+  <tr><td><strong>Entender</strong><br>explicar, interpretar, resumir</td><td>reformular/interpretar com as próprias palavras</td><td>Conceitual — relação entre ideias</td><td>"Por que a água ferve mais rápido em altitude elevada?"</td></tr>
+  <tr><td><strong>Aplicar</strong><br>calcular, resolver, usar</td><td>usar um procedimento já treinado numa situação nova, mas do mesmo tipo</td><td>Procedimental — "como fazer"</td><td>"Calcule a área de um terreno de 12m por 8m."</td></tr>
+  <tr><td><strong>Analisar</strong><br>comparar, decompor, categorizar</td><td>quebrar em partes e explicar COMO/POR QUE elas se relacionam</td><td>Conceitual (geralmente)</td><td>"Compare as causas econômicas e sociais da Revolução Industrial."</td></tr>
+  <tr><td><strong>Avaliar</strong><br>julgar, criticar, justificar</td><td>julgar algo que já existe, com critério e justificativa</td><td>Metacognitivo — julgamento sobre um processo</td><td>"A solução do colega está correta? Justifique."</td></tr>
+  <tr><td><strong>Criar</strong><br>elaborar, propor, planejar</td><td>combinar elementos pra produzir algo novo</td><td>Metacognitivo — planejar algo novo</td><td>"Elabore uma proposta pra reduzir o desperdício de água na escola."</td></tr>
 </table>
-<p class="fonte">Fonte: Krathwohl, D. R. (2002). A Revision of Bloom's Taxonomy: An Overview. Theory Into Practice, 41(4).</p>
-
-<h4>1.1 Método prático: verbo + assunto</h4>
-<p>Segundo Krathwohl (2002), a forma mais confiável de classificar uma questão é separar dois elementos do enunciado: o <strong>VERBO</strong> principal — o que o aluno precisa fazer (lembrar, explicar, calcular, comparar, julgar, criar...) — e o <strong>ASSUNTO</strong> (substantivo) sobre o que ele está fazendo isso. O verbo é geralmente o melhor indicador do nível: se o comando pede pra "listar" ou "nomear", é Lembrar; se pede pra "calcular" um valor com um método já ensinado, é Aplicar; se pede pra "comparar" duas ideias e mostrar a relação entre elas, é Analisar — e assim por diante.</p>
-
-<h4>1.2 Diferenciando níveis vizinhos (os que mais geram dúvida)</h4>
-<p><strong>Lembrar × Entender:</strong> Lembrar é só recuperar o fato ("qual é a fórmula da área do triângulo?"). Entender exige reformular ou interpretar esse fato com as próprias palavras ("por que a fórmula da área do triângulo é base × altura ÷ 2?").</p>
-<p><strong>Aplicar × Analisar:</strong> esta é a divisa mais confundida na prática. Aplicar é usar um procedimento já treinado numa situação parecida ("resolva esta equação do 2º grau"). Analisar exige decompor a situação e entender POR QUE ou COMO as partes se relacionam ("por que este método de resolução funciona, e em que casos ele falharia?").</p>
-<p><strong>Avaliar × Criar:</strong> Avaliar é julgar algo que já existe, com base em critérios ("essa redação atende ao tema proposto? justifique"). Criar é produzir algo novo — planejar, propor, formular ("elabore uma proposta original para..."). Por isso Criar fica no topo: produzir algo novo geralmente exige também avaliar as opções ao longo do caminho.</p>
-<p class="fonte">Fonte: Structural Learning — "Anderson and Krathwohl's Revised Taxonomy: A Teacher's Guide".</p>
-
-<h4>1.3 No AppMaximo</h4>
+<p><strong>Regra prática:</strong> o par Nível → Dimensão da tabela é só o ponto de partida — ajuste quando o conteúdo pedir outra combinação (ex: "analisar um algoritmo passo a passo" é Procedimental, não Conceitual). Os dois pares que mais confundem na prática:</p>
 <ul>
-  <li>Ao cadastrar uma questão, escolha o nível no campo "Nível de Bloom" (ou clique em "✨ Sugerir com IA" pra receber uma sugestão automática, sempre revisável antes de confirmar).</li>
-  <li>Esse campo é o que alimenta o relatório de Diagnóstico da turma — sem ele, o sistema não consegue apontar em qual nível cognitivo os alunos estão com mais dificuldade.</li>
+  <li><strong>Aplicar × Analisar</strong> — Aplicar usa um método já treinado; Analisar exige explicar por que/como ele funciona.</li>
+  <li><strong>Avaliar × Criar</strong> — Avaliar julga o que já existe; Criar produz algo novo.</li>
 </ul>
 
-<h4>1.4 A Dimensão do Conhecimento (o outro eixo da Taxonomia)</h4>
-<p>A formulação original de Anderson &amp; Krathwohl (2001) não é uma lista de 6 níveis — é uma <strong>matriz bidimensional</strong>: o nível cognitivo (seção 1, acima) cruzado com a <strong>Dimensão do Conhecimento</strong>, o TIPO de conhecimento que a questão mobiliza. Desde 2026, o AppMaximo também classifica esse segundo eixo, no campo "Dimensão do Conhecimento" do cadastro de questão (junto do botão "✨ Sugerir com IA", que agora sugere os dois eixos de uma vez).</p>
-<table>
-  <tr><th>Dimensão</th><th>Definição</th><th>Exemplo</th></tr>
-  <tr><td>Factual</td><td>Fatos isolados, terminologia, símbolos — dados soltos e desconectados.</td><td>O símbolo químico do ferro; a data de um evento histórico.</td></tr>
-  <tr><td>Conceitual</td><td>Relações entre ideias, princípios, classificações, generalizações.</td><td>Por que uma fórmula funciona; como dois conceitos se relacionam.</td></tr>
-  <tr><td>Procedimental</td><td>"Como fazer" — algoritmos, técnicas, método passo a passo.</td><td>Como resolver uma equação; como executar uma construção geométrica.</td></tr>
-  <tr><td>Metacognitivo</td><td>Reflexão sobre a própria estratégia de raciocínio; autoavaliação; julgamento sobre um processo ou planejamento de algo novo.</td><td>Avaliar se a estratégia usada foi a mais eficiente; propor um método próprio.</td></tr>
-</table>
-<p>Na prática, cada nível de Bloom tende a puxar pra uma dimensão predominante (isso é só um ponto de partida, ajustável conforme o conteúdo): <strong>Lembrar→Factual · Entender→Conceitual · Aplicar→Procedimental · Analisar→Conceitual · Avaliar→Metacognitivo · Criar→Metacognitivo</strong>.</p>
-<p>Essa classificação é um metadado de bastidor: aparece só pra você (professor) — no banco de questões, no formulário de cadastro, ao "observar" uma lista já criada e no relatório de detalhes da lista — o aluno nunca vê a Dimensão do Conhecimento nem a Unidade Temática de uma questão.</p>
-<p>Pra Matemática, do 6º ano do Fundamental II à 3ª série do Ensino Médio, já existe uma referência pronta: a <strong>"Matriz de Objetivos de Aprendizagem — Matemática"</strong>, uma planilha com um objetivo de aprendizagem para cada conteúdo × nível de Bloom × dimensão do conhecimento, alinhada à BNCC. Use-a como inspiração de fraseado ao classificar (ou ao pedir pra IA gerar) questões desses conteúdos.</p>
-<p>Os filtros do banco de questões (Nível de Bloom, Dimensão do Conhecimento, Ano/Série e Unidade Temática) usam exatamente esses campos — por isso vale preenchê-los mesmo quando parecer redundante: é o que permite, por exemplo, montar rapidamente uma lista só com questões de "Analisar" sobre "Geometria" do 8º ano.</p>
-<p class="fonte">Fonte: Anderson, L. W., &amp; Krathwohl, D. R. (Eds.) (2001). A Taxonomy for Learning, Teaching, and Assessing. Longman.</p>
+<h4>1.1 No AppMaximo</h4>
+<ul>
+  <li>Ao cadastrar uma questão, preencha os dois campos — "Nível de Bloom" e "Dimensão do Conhecimento" — ou clique em "✨ Sugerir com IA" pra receber os dois de uma vez (sempre revisável antes de confirmar). Questões geradas por IA (na aba "Listas" ou na Atividade Extra do aluno) já saem classificadas nos dois eixos automaticamente, pelo mesmo critério desta tabela.</li>
+  <li>É metadado de bastidor: só o professor vê (banco de questões, cadastro, "observar" uma lista/modelo, relatório de detalhes) — o aluno nunca vê esses dois campos.</li>
+  <li>Alimentam o relatório de Diagnóstico da turma e os filtros do Banco de Questões (e da aba "Listas") — por isso vale preencher mesmo quando parecer redundante: é o que permite, por exemplo, montar rapidamente uma lista só com questões de "Analisar" sobre "Geometria" do 8º ano.</li>
+  <li>Pra Matemática (6º ano EF à 3ª série EM), a planilha <strong>"Matriz de Objetivos de Aprendizagem — Matemática"</strong> já traz um objetivo por conteúdo × nível × dimensão, alinhado à BNCC — use como referência de fraseado ao classificar.</li>
+</ul>
+<p class="fonte">Fontes: Anderson, L. W., &amp; Krathwohl, D. R. (Eds.) (2001). A Taxonomy for Learning, Teaching, and Assessing. Longman. · Krathwohl, D. R. (2002). A Revision of Bloom's Taxonomy: An Overview. Theory Into Practice, 41(4).</p>
 
 <h4>2. Identificando pré-requisitos ("subsunções")</h4>
 <p>O AppMaximo usa o termo "pré-requisito" pra descrever o que Ausubel chamava de subsunção: um conteúdo só é aprendido de forma significativa quando se conecta a algo que o aluno já sabe. Se essa base ("subsunçor") não existe ou está frágil, o aluno tende a memorizar o conteúdo novo sem realmente compreendê-lo — e o erro nas provas costuma aparecer não no conteúdo atual, mas nessa base que faltou.</p>
