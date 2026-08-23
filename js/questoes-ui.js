@@ -88,7 +88,10 @@ function renderToolbarMatematica() {
 // MODO "RESPONDER" (aluno)
 // ========================================================================
 
-function renderResponderQuestao(q, idx) {
+/** `semResolucao`: true faz este helper NÃO anexar o gabarito/resolução logo depois da questão —
+ * usado pela exportação em PDF (exportarListaPdf), que prefere juntar todo o gabarito e resolução
+ * comentada numa seção separada no final do documento, em vez de intercalado com cada questão. */
+function renderResponderQuestao(q, idx, semResolucao) {
   const cabecalho = `<div class="questao-box" data-questao-id="${escapeHtml(q.id)}" data-tipo="${escapeHtml(q.tipo)}">
     <div class="questao-enunciado"><strong>${idx + 1}.</strong> ${formatarTextoQuestao(q.text)}</div>
     ${(q.imagens || []).map(img => `<img src="${escapeHtml(img.data)}" style="max-width:100%;border-radius:8px;margin-bottom:10px;" alt="Imagem da questão">`).join('')}`;
@@ -155,7 +158,7 @@ function renderResponderQuestao(q, idx) {
       break;
   }
 
-  return cabecalho + corpo + renderResolucaoQuestao(q) + '</div>';
+  return cabecalho + corpo + (semResolucao ? '' : renderResolucaoQuestao(q)) + '</div>';
 }
 
 /**

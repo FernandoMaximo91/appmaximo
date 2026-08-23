@@ -5,7 +5,7 @@
  * sempre vão direto pra rede, pra nunca mostrar dado desatualizado de prova/nota.
  */
 
-const CACHE_NAME = 'appmaximo-shell-v7'; // IMPORTANTE: mude esse número (v2, v3...) toda vez que
+const CACHE_NAME = 'appmaximo-shell-v8'; // IMPORTANTE: mude esse número (v2, v3...) toda vez que
 // algum arquivo da lista abaixo (index.html, app.js etc) for atualizado — senão o app instalado
 // como PWA continua servindo a versão antiga em cache pra sempre, mesmo depois de o site ser
 // atualizado no GitHub e o usuário dar refresh.
@@ -18,6 +18,7 @@ const ARQUIVOS_SHELL = [
   './js/ui.js',
   './js/questoes-ui.js',
   './js/app.js',
+  './js/vendor/html2pdf.bundle.min.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png'

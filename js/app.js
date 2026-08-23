@@ -91,7 +91,7 @@ function ligarTabsProfessor() {
 }
 function abrirAbaProfessor(nome) {
   document.querySelectorAll('#tabs-professor button').forEach(b => b.classList.toggle('tab-ativa', b.dataset.tab === nome));
-  const map = { turmas: renderTurmas, questoes: renderBancoQuestoes, notas: renderNotas, diagnostico: renderDiagnostico, modelos: renderListasModelo, guia: renderGuiaClassificacao, admin: renderAdmin };
+  const map = { turmas: renderTurmas, questoes: renderBancoQuestoes, notas: renderNotas, diagnostico: renderDiagnostico, listas: renderListasAtividades, modelos: renderListasModelo, guia: renderGuiaClassificacao, admin: renderAdmin };
   (map[nome] || renderTurmas)();
 }
 
@@ -129,7 +129,11 @@ async function renderAlunoPendentes() {
             <strong>${escapeHtml(l.titulo)}</strong><br>
             <small>${l.totalQuestoes} questões${l.cronometroMin ? ' · ⏱ ' + l.cronometroMin + ' min' : ''}</small>
           </div>
-          <button class="btn btn-primario btn-pequeno" onclick="abrirProva('${l.id}')">Responder</button>
+          ${l.agendamentoStatus === 'agendada'
+            ? `<span class="badge badge-info">📅 Abre em ${_formatarDataHora(l.disponivelEm)}</span>`
+            : l.agendamentoStatus === 'encerrada'
+              ? `<span class="badge badge-pendente">⏰ Prazo encerrado</span>`
+              : `<button class="btn btn-primario btn-pequeno" onclick="abrirProva('${l.id}')">Responder</button>`}
         </div>`).join('');
   } catch (e) { el.innerHTML = '<div class="estado-vazio">Não foi possível carregar.</div>'; }
 }
@@ -307,7 +311,7 @@ async function abrirProva(listaId) {
     const avisoResolucao = dados.lista.resolucaoLiberada
       ? ''
       : '<br><small>A resolução comentada e o gabarito ainda não foram liberados pelo professor.</small>';
-    conteudo.innerHTML = `<div id="area-prova-pdf">
+    conteudo.innerHTML = `<div id="area-prova-pdf" class="pdf-export-area">
       ${_cabecalhoResultado(dados)}
       <div class="alerta alerta-info">${avisoResolucao ? avisoResolucao.replace('<br>', '') : 'Resolução liberada pelo professor.'}</div>` +
       dados.questoes.map((q, i) => renderResponderQuestao(q, i)).join('') +
@@ -329,14 +333,41 @@ async function abrirProva(listaId) {
   if (dados.lista.cronometroMin) {
     iniciarCronometro(dados.lista.cronometroMin);
   }
+  _iniciarMonitorSaidaTela();
+}
+
+/**
+ * Avisa o aluno (e registra pro professor) quando ele sai da tela/aba durante uma atividade em
+ * andamento — troca de app, minimiza o navegador, muda de aba. Cada saída é contada em
+ * window._provaSaidasDeTela e enviada junto com as respostas em enviarProva() (ver
+ * questoes.entregarLista no backend); aparece no relatório da lista pro professor (ver
+ * abrirDetalhesLista). Só um listener por vez — _iniciarMonitorSaidaTela sempre limpa o anterior.
+ */
+function _iniciarMonitorSaidaTela() {
+  _pararMonitorSaidaTela();
+  window._provaSaidasDeTela = 0;
+  window._provaVisibilidadeHandler = () => {
+    if (document.hidden) {
+      window._provaSaidasDeTela++;
+    } else if (window._provaSaidasDeTela > 0) {
+      toast('Você saiu da tela durante a atividade. Isso fica registrado para o professor.', 'aviso', 6000);
+    }
+  };
+  document.addEventListener('visibilitychange', window._provaVisibilidadeHandler);
+}
+function _pararMonitorSaidaTela() {
+  if (window._provaVisibilidadeHandler) {
+    document.removeEventListener('visibilitychange', window._provaVisibilidadeHandler);
+    window._provaVisibilidadeHandler = null;
+  }
 }
 
 /** Gera um PDF da tela de revisão da atividade (cabeçalho + questões + resolução), direto no aparelho do aluno. */
 function baixarPdfProva() {
-  if (typeof html2pdf === 'undefined') { toast('Não foi possível gerar o PDF agora — verifique sua conexão com a internet e tente de novo.', 'erro'); return; }
+  if (typeof html2pdf === 'undefined') { toast('Não foi possível gerar o PDF agora. Tente de novo em alguns segundos.', 'erro'); return; }
   const area = document.getElementById('area-prova-pdf');
   const nomeArquivo = `${(provaAtual.lista.titulo || 'atividade').replace(/[^\w\s-]/g, '')} - ${sessaoLocal.nome}.pdf`;
-  html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
+  html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
 }
 
 function iniciarCronometro(minutos) {
@@ -355,11 +386,13 @@ function iniciarCronometro(minutos) {
 
 async function enviarProva() {
   if (cronometroInterval) clearInterval(cronometroInterval);
+  _pararMonitorSaidaTela();
   const respostas = {};
   provaAtual.questoes.forEach(q => { respostas[q.id] = coletarRespostaQuestao(q); });
   const duracaoSegundos = window._provaInicioMs ? Math.round((Date.now() - window._provaInicioMs) / 1000) : null;
+  const saidasDeTela = window._provaSaidasDeTela || 0;
   try {
-    const resultado = await chamarComLoading('questoes.entregarLista', { listaId: provaAtual.lista.id, respostas, duracaoSegundos });
+    const resultado = await chamarComLoading('questoes.entregarLista', { listaId: provaAtual.lista.id, respostas, duracaoSegundos, saidasDeTela });
     document.getElementById('prova-conteudo').innerHTML = `
       <div class="alerta alerta-sucesso">
         <strong>Enviado!</strong> Você acertou ${resultado.acertos} de ${resultado.total} questões corrigíveis automaticamente.
@@ -371,6 +404,7 @@ async function enviarProva() {
 }
 
 function fecharProva() {
+  _pararMonitorSaidaTela();
   document.getElementById('prova-cronometro').classList.add('hidden');
   document.getElementById('view-prova').classList.add('hidden');
   document.getElementById('view-aluno').classList.remove('hidden');
@@ -591,17 +625,78 @@ function _cardLista(l) {
       ${responderam} de ${totalAlunos} aluno(s) já responderam
       ${l.cronometroMin ? `<br>⏱ ${l.cronometroMin} min` : ''}
       <br>${l.resolucaoLiberada ? '<span class="badge badge-feito">Resolução liberada</span>' : '<span class="badge badge-pendente">Resolução bloqueada</span>'}
+      ${_badgeAgendamentoLista(l)}
     </p>
-    <div class="card-quadrado-acoes" style="flex-wrap:wrap;">
+    <div class="card-quadrado-acoes">
       <button class="btn btn-pequeno btn-primario" onclick="abrirDetalhesLista('${l.id}')">📊 Detalhes</button>
       <button class="btn btn-pequeno btn-secundario" onclick="abrirQuestoesDaLista('${l.id}')">👁 Ver questões</button>
       <button class="btn btn-pequeno btn-secundario" onclick="exportarListaPdf('${l.id}')">📄 Exportar PDF</button>
       <button class="btn btn-pequeno btn-secundario" onclick="salvarListaComoModelo('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">💾 Salvar como modelo</button>
       <button class="btn btn-pequeno btn-secundario" onclick="abrirCorrecaoDiscursivas('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Corrigir discursivas</button>
       <button class="btn btn-pequeno ${l.resolucaoLiberada ? 'btn-sucesso' : 'btn-secundario'}" onclick="alternarResolucao('${l.id}', ${!l.resolucaoLiberada})">${l.resolucaoLiberada ? '🔓 Resolução liberada' : '🔒 Liberar resolução'}</button>
+      <button class="btn btn-pequeno btn-secundario" onclick="modalAgendarLista('${l.id}')">📅 Agendar</button>
       <button class="btn btn-pequeno btn-perigo" onclick="excluirLista('${l.id}', '${escapeHtml(l.titulo).replace(/'/g, "\\'")}')">Excluir</button>
     </div>
   </div>`;
+}
+
+/** Selo de agendamento no card da lista (visão do professor) — usa as mesmas datas cruas
+ * (disponivelEm/disponivelAte) que o backend usa em _statusAgendamentoLista, calculado aqui
+ * localmente só pra exibição (a regra que vale de verdade é sempre a do servidor). */
+function _badgeAgendamentoLista(l) {
+  if (!l.disponivelEm && !l.disponivelAte) return '';
+  const agora = new Date();
+  let texto, classe;
+  if (l.disponivelEm && agora < new Date(l.disponivelEm)) {
+    texto = `📅 Agendada — abre em ${_formatarDataHora(l.disponivelEm)}`; classe = 'badge-info';
+  } else if (l.disponivelAte && agora > new Date(l.disponivelAte)) {
+    texto = `⏰ Encerrada em ${_formatarDataHora(l.disponivelAte)}`; classe = 'badge-pendente';
+  } else {
+    texto = `✅ Disponível${l.disponivelAte ? ' até ' + _formatarDataHora(l.disponivelAte) : ''}`; classe = 'badge-feito';
+  }
+  return `<br><span class="badge ${classe}">${texto}</span>`;
+}
+
+/** Modal pra definir/editar quando a lista abre e/ou encerra pro aluno. Ambos os campos são
+ * opcionais e independentes — dá pra só agendar abertura, só prazo final, ou os dois. */
+function modalAgendarLista(listaId) {
+  const l = (turmaAtualDetalhe.listas || []).find(x => x.id === listaId);
+  if (!l) { toast('Lista não encontrada.', 'erro'); return; }
+  const [abreData, abreHora] = _dataHoraParaInputs(l.disponivelEm);
+  const [encerraData, encerraHora] = _dataHoraParaInputs(l.disponivelAte);
+  abrirModal(`<h3>📅 Agendar — ${escapeHtml(l.titulo)}</h3>
+    <p style="color:var(--cinza-texto);font-size:0.85rem;">Deixe em branco pra não restringir aquele lado (ex: só preencher "abre em" deixa a atividade disponível pra sempre depois desse horário).</p>
+    <label>Abre em</label>
+    <div style="display:flex;gap:6px;">
+      <input id="input-agendar-abre-data" type="date" value="${abreData}" style="flex:1;">
+      <input id="input-agendar-abre-hora" type="time" value="${abreHora}" style="flex:1;">
+    </div>
+    <label>Encerra em</label>
+    <div style="display:flex;gap:6px;">
+      <input id="input-agendar-encerra-data" type="date" value="${encerraData}" style="flex:1;">
+      <input id="input-agendar-encerra-hora" type="time" value="${encerraHora}" style="flex:1;">
+    </div>
+    <div class="linha-botoes" style="margin-top:14px;">
+      ${(l.disponivelEm || l.disponivelAte) ? `<button class="btn btn-secundario" onclick="salvarAgendamentoLista('${l.id}', true)">Remover agendamento</button>` : ''}
+      <button class="btn btn-primario" onclick="salvarAgendamentoLista('${l.id}', false)">Salvar</button>
+    </div>`);
+}
+
+function _dataHoraParaInputs(iso) {
+  if (!iso) return ['', ''];
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return [`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, `${pad(d.getHours())}:${pad(d.getMinutes())}`];
+}
+
+async function salvarAgendamentoLista(listaId, limpar) {
+  const disponivelEm = limpar ? null : _combinarDataHora('input-agendar-abre-data', 'input-agendar-abre-hora');
+  const disponivelAte = limpar ? null : _combinarDataHora('input-agendar-encerra-data', 'input-agendar-encerra-hora');
+  if (disponivelEm && disponivelAte && new Date(disponivelAte) <= new Date(disponivelEm)) {
+    toast('O horário de encerramento precisa ser depois do horário de abertura.', 'erro'); return;
+  }
+  await chamarComLoading('listas.agendar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, listaId, disponivelEm, disponivelAte });
+  fecharModal(); toast(limpar ? 'Agendamento removido.' : 'Agendamento salvo.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
 }
 
 /** "Detalhes" da lista: quantos responderam, média, tempo médio, ranking de questões com mais erro e situação por aluno. */
@@ -615,6 +710,7 @@ async function abrirDetalhesLista(listaId) {
       <div><small>Média da turma</small><strong>${pct(dados.mediaPercentual)}</strong></div>
       <div><small>Tempo médio</small><strong>${_formatarDuracao(dados.mediaDuracaoSegundos)}</strong></div>
     </div>
+    ${dados.alunosComSaidaDeTela > 0 ? `<div class="alerta alerta-atencao" style="margin-bottom:14px;">⚠️ ${dados.alunosComSaidaDeTela} aluno(s) saíram da tela durante esta atividade (ver detalhes abaixo).</div>` : ''}
     <h4>Questões com mais erros</h4>
     ${rankingComRespostas.length === 0 ? '<p style="color:var(--cinza-texto);font-size:0.85rem;">Ainda sem respostas suficientes pra calcular.</p>' :
       rankingComRespostas.slice(0, 8).map(r => `
@@ -628,7 +724,7 @@ async function abrirDetalhesLista(listaId) {
     <h4>Situação por aluno</h4>
     ${dados.porAluno.map(a => `
       <div class="lista-item">
-        <span>${escapeHtml(a.alunoNome)} ${a.pendenteDiscursiva ? '<span class="badge badge-pendente">Discursiva pendente</span>' : ''}</span>
+        <span>${escapeHtml(a.alunoNome)} ${a.pendenteDiscursiva ? '<span class="badge badge-pendente">Discursiva pendente</span>' : ''} ${a.saidasDeTela > 0 ? `<span class="badge badge-pendente" title="Saiu da tela da atividade">⚠️ Saiu da tela (${a.saidasDeTela}x)</span>` : ''}</span>
         <span>${a.respondeu ? `${pct(a.percentualGeral)} · ${_formatarDuracao(a.duracaoSegundos)}` : '<span class="badge badge-pendente">Não respondeu</span>'}</span>
       </div>`).join('')}
     <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
@@ -656,33 +752,51 @@ function _cabecalhoExportacaoLista(lista) {
     <div style="font-size:1.15rem;font-weight:700;margin-top:10px;">${escapeHtml(lista.titulo)}</div>
     <div style="font-size:0.85rem;opacity:0.92;margin-top:6px;line-height:1.5;">
       ${escapeHtml(turmaAtualDetalhe.nome)}${(lista.componentes || []).length ? ' · ' + escapeHtml(lista.componentes.join(', ')) : ''}<br>
-      Gabarito e resolução comentada · gerado em ${agora} por ${escapeHtml(sessaoLocal.nome)}
+      Questões · gabarito e resolução comentada no final · gerado em ${agora} por ${escapeHtml(sessaoLocal.nome)}
     </div>
   </div>`;
 }
 
-/** Exporta uma lista (questões + gabarito + resolução) em PDF com cabeçalho de marca, pro professor imprimir/compartilhar. */
+/** Seção de gabarito/resolução comentada, reunida no FINAL do PDF (em vez de intercalada logo
+ * depois de cada questão) — começa em página nova pra ficar bem separada das questões. */
+function _secaoGabaritoExportacao(questoes) {
+  return `<div style="page-break-before:always;padding-top:4px;">
+    <h2 style="color:var(--azul-escuro,#1e3a8a);border-bottom:2px solid var(--azul,#2563eb);padding-bottom:8px;">📋 Gabarito e resolução comentada</h2>
+    ${questoes.map((q, i) => `<div style="margin:14px 0 4px;font-weight:700;">Questão ${i + 1}</div>${renderResolucaoQuestao(q)}`).join('')}
+  </div>`;
+}
+
+/** Exporta uma lista (questões + gabarito + resolução) em PDF com cabeçalho de marca, pro professor imprimir/compartilhar.
+ * O gabarito/resolução de cada questão fica reunido numa seção só, no final do documento — não
+ * logo abaixo de cada questão — pra o PDF servir tanto de prova pra aplicar quanto de gabarito à parte. */
 async function exportarListaPdf(listaId) {
-  if (typeof html2pdf === 'undefined') { toast('Não foi possível gerar o PDF agora — verifique sua conexão com a internet e tente de novo.', 'erro'); return; }
+  if (typeof html2pdf === 'undefined') { toast('Não foi possível gerar o PDF agora. Tente de novo em alguns segundos.', 'erro'); return; }
   const dados = await chamarComLoading('questoes.listarDaLista', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, listaId });
   const listaCompleta = (turmaAtualDetalhe.listas || []).find(l => l.id === listaId) || dados.lista;
 
   const area = document.createElement('div');
   area.id = 'area-lista-pdf-tmp';
-  // IMPORTANTE: fica DENTRO dos limites do viewport (top:0/left:0) — coordenada negativa
-  // (ex: left:-9999px) fazia o html2canvas gerar PDF em branco em alguns navegadores, porque ele
-  // clona a página baseado na área visível da janela. Fica coberto pelo overlay de loading
-  // (z-index maior) enquanto renderiza, então o professor só vê o spinner, não o conteúdo "piscando".
-  area.style.cssText = 'position:fixed;top:0;left:0;width:800px;background:white;padding:4px;z-index:1;';
+  // IMPORTANTE: SEM position:fixed/absolute e SEM html2canvas.windowWidth — ambos foram testados
+  // e confirmados (em navegador real, headless) como causa de PDF em branco (position:fixed/absolute
+  // faz o html2canvas medir altura 0) ou de conteúdo cortado à esquerda (windowWidth desalinha o
+  // recorte quando difere da largura real da janela). Com posicionamento normal (estático), o
+  // elemento cai no fim do <body> — fora da área visível na tela — e fica coberto pelo overlay
+  // de loading (mostrarLoading) enquanto for necessário, então o professor só vê o spinner.
+  // classe "pdf-export-area": dá margem de segurança (ver styles.css) contra outro bug real e
+  // confirmado do html2canvas — texto colado na borda direita do contêiner é cortado (não quebra
+  // de linha) por causa de uma pequena divergência na medição de texto do html2canvas.
+  area.className = 'pdf-export-area';
+  area.style.cssText = 'width:800px;background:white;padding:4px;';
   area.innerHTML = _cabecalhoExportacaoLista({ ...dados.lista, componentes: listaCompleta.componentes }) +
-    dados.questoes.map((q, i) => renderResponderQuestao(q, i)).join('');
+    dados.questoes.map((q, i) => renderResponderQuestao(q, i, true)).join('') +
+    _secaoGabaritoExportacao(dados.questoes);
+  mostrarLoading();
   document.body.appendChild(area);
   area.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
 
-  mostrarLoading();
   const nomeArquivo = `${(dados.lista.titulo || 'lista').replace(/[^\w\s-]/g, '')} - gabarito.pdf`;
   try {
-    await html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2, windowWidth: 800, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
+    await html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
   } catch (e) {
     toast('Não foi possível gerar o PDF agora. Tente de novo.', 'erro');
   } finally {
@@ -928,6 +1042,23 @@ async function modalNovaLista() {
   abrirModal(`<h3>Nova lista de atividades</h3>
     <label>Título</label><input id="input-lista-titulo">
     <label>Cronômetro (minutos, opcional)</label><input id="input-lista-cronometro" type="number">
+    <label>Agendamento (opcional) <small style="color:var(--cinza-texto);font-weight:400;">— deixe em branco pra ficar disponível assim que criar</small></label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:140px;">
+        <small style="color:var(--cinza-texto);">Abre em</small>
+        <div style="display:flex;gap:6px;">
+          <input id="input-lista-abre-data" type="date" style="flex:1;">
+          <input id="input-lista-abre-hora" type="time" style="flex:1;">
+        </div>
+      </div>
+      <div style="flex:1;min-width:140px;">
+        <small style="color:var(--cinza-texto);">Encerra em</small>
+        <div style="display:flex;gap:6px;">
+          <input id="input-lista-encerra-data" type="date" style="flex:1;">
+          <input id="input-lista-encerra-hora" type="time" style="flex:1;">
+        </div>
+      </div>
+    </div>
     <label>Selecione as questões</label>
     <div class="card">
       <input id="filtro-lista-busca" placeholder="Buscar por enunciado, componente ou conteúdo...">
@@ -978,13 +1109,252 @@ function _alternarSelecaoQuestaoLista(id, marcado) {
   document.getElementById('contador-selecionadas-lista').innerHTML = `<strong>${n}</strong> questõe${n === 1 ? '' : 's'} selecionada${n === 1 ? '' : 's'}.`;
 }
 
+/** Junta um <input type="date"> + <input type="time"> num ISO só, ou null se a data não foi preenchida
+ * (hora em branco vira 00:00). Usado pro agendamento de listas (abre em / encerra em). */
+function _combinarDataHora(idData, idHora) {
+  const data = document.getElementById(idData).value;
+  if (!data) return null;
+  const hora = document.getElementById(idHora).value || '00:00';
+  const d = new Date(`${data}T${hora}:00`);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 async function salvarNovaLista() {
   const titulo = document.getElementById('input-lista-titulo').value;
   const cronometroMin = document.getElementById('input-lista-cronometro').value || null;
   const qIds = Array.from(window._listaQuestoesSelecionadas);
   if (qIds.length === 0) { toast('Selecione ao menos uma questão (em qualquer página/filtro — a seleção é mantida).', 'erro'); return; }
-  await chamarComLoading('listas.criar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, titulo, cronometroMin, qIds });
-  fecharModal(); toast('Lista criada.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+  const disponivelEm = _combinarDataHora('input-lista-abre-data', 'input-lista-abre-hora');
+  const disponivelAte = _combinarDataHora('input-lista-encerra-data', 'input-lista-encerra-hora');
+  if (disponivelEm && disponivelAte && new Date(disponivelAte) <= new Date(disponivelEm)) {
+    toast('O horário de encerramento precisa ser depois do horário de abertura.', 'erro'); return;
+  }
+  await chamarComLoading('listas.criar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, titulo, cronometroMin, qIds, disponivelEm, disponivelAte });
+  fecharModal(); toast('Lista criada.', 'sucesso');
+  // Criada a partir da aba "Listas" (ver abrirNovaListaNaAba) volta pra lá em vez de ir pra turma —
+  // fora isso, comportamento de sempre: abre a turma onde a lista acabou de ser criada.
+  if (window._origemNovaLista === 'listas') { window._origemNovaLista = null; renderListasAtividades(); }
+  else { abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id); }
+}
+
+// ======================================================================
+// PROFESSOR — ABA "LISTAS" (todas as atividades já criadas nas turmas, num lugar só,
+// separadas por ano escolar e com os mesmos filtros do Banco de Questões — inclusive
+// Dimensão do Conhecimento). As listas continuam vivendo dentro de cada turma; esta aba é
+// só uma visão agregada + um atalho pra criar uma lista nova direto numa turma escolhida.
+// ======================================================================
+
+window._filtrosListasAtividades = { busca: '', componente: '', ano: '', bloomLevel: '', dimensaoConhecimento: '' };
+
+async function renderListasAtividades() {
+  const el = document.getElementById('professor-conteudo');
+  await carregarComponentes();
+  const escolasResp = await chamarComLoading('turmas.listarEscolas', {});
+  const todasTurmas = escolasResp.escolas.flatMap(e => e.turmas.map(t => ({ ...t, escolaId: e.id, escolaNome: e.nome })));
+  window._turmasListasAtividades = todasTurmas; // reaproveitado pelo modal de criação por IA
+  const f = window._filtrosListasAtividades;
+  el.innerHTML = `
+    <p style="color:var(--cinza-texto);">Todas as listas de atividades já criadas nas suas turmas, num lugar só — separadas por ano escolar. Toda lista criada aqui já nasce dentro da turma escolhida, exatamente como se fosse criada por lá.</p>
+    <div class="card">
+      <h4>+ Nova lista</h4>
+      ${todasTurmas.length === 0 ? '<p style="color:var(--cinza-texto);font-size:0.85rem;">Crie uma turma primeiro (aba Turmas) pra poder criar uma lista.</p>' : `
+        <label>Turma</label>
+        <select id="select-listas-turma-nova">${todasTurmas.map(t => `<option value="${t.escolaId}|${t.id}">${escapeHtml(t.escolaNome)} — ${escapeHtml(t.nome)}</option>`).join('')}</select>
+        <div class="linha-botoes" style="margin-top:8px;">
+          <button class="btn btn-primario btn-pequeno" onclick="abrirNovaListaNaAba(document.getElementById('select-listas-turma-nova').value)">+ Nova lista para esta turma</button>
+          <button class="btn btn-secundario btn-pequeno" onclick="modalCriarPorIA()">✨ Criar questões/lista por IA</button>
+        </div>`}
+    </div>
+    <div class="card">
+      <h4>Filtros</h4>
+      <input id="filtro-listas-busca" placeholder="Buscar por título..." value="${escapeHtml(f.busca)}">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <div style="flex:1;min-width:140px;">${renderSelectComponente('filtro-listas-comp', f.componente, true)}</div>
+        <div style="flex:1;min-width:140px;">
+          <input id="filtro-listas-ano" list="lista-anos-serie-listas" placeholder="Ano escolar" value="${escapeHtml(f.ano)}">
+          <datalist id="lista-anos-serie-listas">${ANOS_SERIE_SUGESTOES.map(a => `<option value="${a}">`).join('')}</datalist>
+        </div>
+        <div style="flex:1;min-width:140px;">
+          <select id="filtro-listas-bloom">
+            <option value="">Todos os níveis de Bloom</option>
+            ${Object.entries(LABELS_BLOOM).map(([k, label]) => `<option value="${k}" ${f.bloomLevel === k ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div style="flex:1;min-width:140px;">
+          <select id="filtro-listas-dimensao">
+            <option value="">Todas as Dimensões do Conhecimento</option>
+            ${DIMENSOES_CONHECIMENTO_OPCOES.map(d => `<option value="${d}" ${f.dimensaoConhecimento === d ? 'selected' : ''}>${d}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-secundario btn-pequeno" style="margin-top:8px;" onclick="_filtrarListasAtividades()">Filtrar</button>
+    </div>
+    <div id="listas-atividades-resultado"><div class="estado-vazio">Carregando...</div></div>`;
+  _filtrarListasAtividades();
+}
+
+async function _filtrarListasAtividades() {
+  const container = document.getElementById('listas-atividades-resultado');
+  window._filtrosListasAtividades = {
+    busca: document.getElementById('filtro-listas-busca').value.trim(),
+    componente: document.getElementById('filtro-listas-comp').value,
+    ano: document.getElementById('filtro-listas-ano').value.trim(),
+    bloomLevel: document.getElementById('filtro-listas-bloom').value,
+    dimensaoConhecimento: document.getElementById('filtro-listas-dimensao').value
+  };
+  const dados = await chamarComLoading('listas.listarTodas', window._filtrosListasAtividades);
+  if (dados.itens.length === 0) { container.innerHTML = '<div class="estado-vazio">Nenhuma lista encontrada.</div>'; return; }
+
+  // Agrupa por ano escolar (primeiro ano presente entre as questões da lista; sem ano tagueado
+  // cai em "Sem ano definido"). Ordem dos grupos segue ANOS_SERIE_SUGESTOES (6º ano → 3ª série
+  // EM); anos fora dessa lista (texto livre) aparecem depois em ordem alfabética; "Sem ano
+  // definido" sempre por último.
+  const grupos = new Map();
+  dados.itens.forEach(l => {
+    const chave = (l.anos && l.anos[0]) || 'Sem ano definido';
+    if (!grupos.has(chave)) grupos.set(chave, []);
+    grupos.get(chave).push(l);
+  });
+  const chaves = Array.from(grupos.keys()).sort((a, b) => {
+    if (a === 'Sem ano definido') return 1;
+    if (b === 'Sem ano definido') return -1;
+    const ia = ANOS_SERIE_SUGESTOES.indexOf(a), ib = ANOS_SERIE_SUGESTOES.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  container.innerHTML = chaves.map(chave => `
+    <h4 style="margin-top:18px;">${escapeHtml(chave)}</h4>
+    ${grupos.get(chave).map(l => _cardListaAtividade(l)).join('')}`).join('');
+}
+
+function _cardListaAtividade(l) {
+  const agendamento = l.agendamentoStatus === 'agendada'
+    ? `<span class="badge badge-info">📅 Abre em ${_formatarDataHora(l.disponivelEm)}</span>`
+    : l.agendamentoStatus === 'encerrada'
+      ? `<span class="badge badge-pendente">⏰ Encerrada em ${_formatarDataHora(l.disponivelAte)}</span>`
+      : (l.disponivelEm || l.disponivelAte) ? `<span class="badge badge-feito">✅ Disponível${l.disponivelAte ? ' até ' + _formatarDataHora(l.disponivelAte) : ''}</span>` : '';
+  return `<div class="card lista-item">
+    <div>
+      <strong>${escapeHtml(l.titulo)}</strong><br>
+      <small>${escapeHtml(l.escolaNome)} — ${escapeHtml(l.turmaNome)} · ${l.totalQuestoes} questões${(l.componentes || []).length ? ' · ' + escapeHtml(l.componentes.join(', ')) : ''}</small><br>
+      <small>${l.responderam} de ${l.totalAlunos} aluno(s) já responderam${l.cronometroMin ? ' · ⏱ ' + l.cronometroMin + ' min' : ''}</small>
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+        ${l.resolucaoLiberada ? '<span class="badge badge-feito">Resolução liberada</span>' : '<span class="badge badge-pendente">Resolução bloqueada</span>'}
+        ${agendamento}
+        ${(l.bloomLevels || []).map(b => `<span class="badge badge-info">${escapeHtml(LABELS_BLOOM[b] || b)}</span>`).join('')}
+        ${(l.dimensoes || []).map(d => `<span class="badge badge-info">${escapeHtml(d)}</span>`).join('')}
+      </div>
+    </div>
+    <button class="btn btn-pequeno btn-secundario" onclick="_abrirTurmaDaListaAtividade('${l.escolaId}', '${l.turmaId}')">Abrir na turma →</button>
+  </div>`;
+}
+
+async function _abrirTurmaDaListaAtividade(escolaId, turmaId) {
+  abrirAbaProfessor('turmas');
+  await abrirTurma(escolaId, turmaId);
+}
+
+/** Abre o modal de criação de lista já com a turma escolhida na aba "Listas" — a lista criada
+ * fica salva normalmente dentro dessa turma (turma.listas), do mesmo jeito que criar lá de dentro
+ * da turma (ver clarificação do Fernando: listas criadas aqui precisam ficar disponíveis nas turmas). */
+async function abrirNovaListaNaAba(valorTurma) {
+  if (!valorTurma) { toast('Escolha uma turma primeiro.', 'erro'); return; }
+  const [escolaId, turmaId] = valorTurma.split('|');
+  turmaAtualDetalhe = await chamarComLoading('turmas.detalhes', { turmaId });
+  turmaAtualDetalhe._escolaId = escolaId;
+  window._origemNovaLista = 'listas';
+  await modalNovaLista();
+}
+
+// ---------- Criar questões/lista por IA (dentro da aba "Listas") ----------
+
+/** Modal de criação por IA — sempre múltipla escolha (o tipo auto-corrigível), com os mesmos
+ * critérios de classificação (Bloom + Dimensão do Conhecimento) usados no resto do app. A IA só
+ * GERA; nada é salvo até o professor revisar e confirmar (ver confirmarGerarPorIA). */
+function modalCriarPorIA() {
+  const turmas = window._turmasListasAtividades || [];
+  abrirModal(`<h3>✨ Criar por IA</h3>
+    <p style="font-size:0.85rem;color:var(--cinza-texto);">Gera questões de múltipla escolha com a IA, já seguindo os critérios de classificação (Bloom + Dimensão do Conhecimento) usados no resto do app. Você sempre revisa antes de salvar — nada é gravado automaticamente. Pra manter o consumo de créditos de IA baixo, gere só a quantidade que for de fato usar.</p>
+    <label>Componente</label>${renderSelectComponente('input-ia-comp', '')}
+    <label>Conteúdo específico</label><input id="input-ia-cont" placeholder="Ex: Frações">
+    <label>Ano/série (opcional)</label>
+    <input id="input-ia-ano" list="lista-anos-serie-ia" placeholder="Ex: 8º ano EF">
+    <datalist id="lista-anos-serie-ia">${ANOS_SERIE_SUGESTOES.map(a => `<option value="${a}">`).join('')}</datalist>
+    <label>Quantidade de questões (máx. 15)</label><input id="input-ia-qtd" type="number" min="1" max="15" value="5">
+    <label>Dificuldade</label>
+    <select id="input-ia-dif"><option value="Fácil">Fácil</option><option value="Médio" selected>Médio</option><option value="Difícil">Difícil</option></select>
+    <label>Níveis de Bloom <small style="color:var(--cinza-texto);font-weight:400;">(opcional — deixe desmarcado pra IA distribuir entre níveis)</small></label>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin:6px 0;">
+      ${Object.entries(LABELS_BLOOM).map(([k, label]) => `
+        <label style="display:inline-flex;align-items:center;gap:4px;font-weight:400;"><input type="checkbox" class="chk-ia-bloom" value="${k}"> ${label}</label>`).join('')}
+    </div>
+    <label>Unidade Temática (opcional)</label><input id="input-ia-unidade" placeholder="Ex: Números">
+    <label>Estilo/banca de referência (opcional)</label><input id="input-ia-estilo" placeholder="Ex: estilo ENEM">
+    <button class="btn btn-primario btn-full" style="margin-top:8px;" onclick="confirmarGerarPorIA()">✨ Gerar com IA</button>
+    <div id="preview-gerar-ia"></div>
+    ${turmas.length > 0 ? `
+      <div class="card" style="margin-top:12px;">
+        <label>Pra criar uma lista com as questões selecionadas, escolha a turma (e um título, opcional):</label>
+        <select id="select-ia-turma">${turmas.map(t => `<option value="${t.escolaId}|${t.id}">${escapeHtml(t.escolaNome)} — ${escapeHtml(t.nome)}</option>`).join('')}</select>
+        <input id="input-ia-titulo-lista" placeholder="Título da lista (opcional)" style="margin-top:6px;">
+      </div>` : ''}`);
+}
+
+async function confirmarGerarPorIA() {
+  const comp = document.getElementById('input-ia-comp').value;
+  const cont = document.getElementById('input-ia-cont').value.trim();
+  if (!comp || !cont) { toast('Escolha o componente e o conteúdo.', 'erro'); return; }
+  const ano = document.getElementById('input-ia-ano').value.trim();
+  const quantidade = parseInt(document.getElementById('input-ia-qtd').value, 10) || 5;
+  const dificuldade = document.getElementById('input-ia-dif').value;
+  const niveisBloom = Array.from(document.querySelectorAll('.chk-ia-bloom:checked')).map(c => c.value);
+  const unidadeTematica = document.getElementById('input-ia-unidade').value.trim();
+  const estilo = document.getElementById('input-ia-estilo').value.trim();
+  const resultado = await chamarComLoading('ia.gerarQuestoesPorIA', { comp, cont, ano, quantidade, dificuldade, niveisBloom, unidadeTematica, estilo });
+  window._questoesIAPreview = resultado.questoes.map(q => ({ ...q, incluir: true }));
+  document.getElementById('preview-gerar-ia').innerHTML = `
+    <p><strong>${resultado.total} questões geradas.</strong> Revise antes de salvar:</p>
+    ${window._questoesIAPreview.map((q, i) => `
+      <div class="card">
+        <label class="alternativa"><input type="checkbox" checked onchange="window._questoesIAPreview[${i}].incluir=this.checked"><span>${formatarTextoQuestao(q.text).slice(0, 150)}...</span></label>
+        <small>${escapeHtml(q.cont || '')} · Gabarito: ${escapeHtml(q.gabarito)} · ${escapeHtml(LABELS_BLOOM[q.bloomLevel] || '')}${q.dimensaoConhecimento ? ' · ' + escapeHtml(q.dimensaoConhecimento) : ''}</small>
+        <div style="margin-top:6px;"><button type="button" class="btn btn-pequeno btn-secundario" onclick="abrirVisualizacaoQuestao(window._questoesIAPreview[${i}])">👁 Ver questão completa</button></div>
+      </div>`).join('')}
+    <div class="linha-botoes" style="margin-top:10px;">
+      <button class="btn btn-secundario" onclick="salvarQuestoesGeradasIA()">💾 Salvar só no Banco de Questões</button>
+      ${(window._turmasListasAtividades || []).length > 0 ? '<button class="btn btn-primario" onclick="criarListaComQuestoesGeradasIA()">📝 Criar lista com estas questões</button>' : ''}
+    </div>`;
+}
+
+async function salvarQuestoesGeradasIA() {
+  const selecionadas = (window._questoesIAPreview || []).filter(q => q.incluir).map(({ incluir, ...q }) => q);
+  if (selecionadas.length === 0) { toast('Selecione ao menos uma questão.', 'erro'); return; }
+  const resultado = await chamarComLoading('questoes.importarJSON', { questoes: selecionadas });
+  fecharModal(); toast(`${resultado.importadas} questões salvas no banco.`, 'sucesso'); renderListasAtividades();
+}
+
+/** Salva as questões geradas selecionadas no Banco de Questões e, com os IDs recém-criados,
+ * já monta uma lista nova na turma escolhida — a lista fica disponível lá exatamente como
+ * qualquer outra (ver clarificação do Fernando sobre listas criadas na aba "Listas"). */
+async function criarListaComQuestoesGeradasIA() {
+  const selecionadas = (window._questoesIAPreview || []).filter(q => q.incluir).map(({ incluir, ...q }) => q);
+  if (selecionadas.length === 0) { toast('Selecione ao menos uma questão.', 'erro'); return; }
+  const valorTurma = document.getElementById('select-ia-turma').value;
+  if (!valorTurma) { toast('Escolha a turma.', 'erro'); return; }
+  const [escolaId, turmaId] = valorTurma.split('|');
+  const cont = document.getElementById('input-ia-cont').value.trim();
+  const titulo = document.getElementById('input-ia-titulo-lista').value.trim() || `${cont} (gerado por IA)`;
+  const resultadoImport = await chamarComLoading('questoes.importarJSON', { questoes: selecionadas });
+  if (!resultadoImport.idsImportados || resultadoImport.idsImportados.length === 0) {
+    toast('Nenhuma questão nova pra criar a lista (todas eram duplicadas de questões já existentes).', 'erro'); return;
+  }
+  await chamarComLoading('listas.criar', { escolaId, turmaId, titulo, cronometroMin: null, qIds: resultadoImport.idsImportados });
+  fecharModal();
+  toast(`Lista criada com ${resultadoImport.idsImportados.length} questão(ões).${resultadoImport.ignoradasDuplicadas ? ` (${resultadoImport.ignoradasDuplicadas} duplicada(s) ignorada(s))` : ''}`, 'sucesso');
+  renderListasAtividades();
 }
 
 // ======================================================================

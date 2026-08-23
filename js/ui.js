@@ -24,13 +24,14 @@ function formatarTextoQuestao(textoCru) {
 function mostrarLoading() { document.getElementById('loading').classList.remove('hidden'); }
 function esconderLoading() { document.getElementById('loading').classList.add('hidden'); }
 
-function toast(mensagem, tipo) {
+function toast(mensagem, tipo, duracaoMs) {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
-  el.className = 'toast ' + (tipo === 'erro' ? 'toast-erro' : 'toast-sucesso');
+  const classeTipo = tipo === 'erro' ? 'toast-erro' : tipo === 'aviso' ? 'toast-aviso' : 'toast-sucesso';
+  el.className = 'toast ' + classeTipo;
   el.textContent = mensagem;
   container.appendChild(el);
-  setTimeout(() => el.remove(), 4000);
+  setTimeout(() => el.remove(), duracaoMs || 4000);
 }
 
 function abrirModal(htmlConteudo) {

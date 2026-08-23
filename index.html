@@ -73,6 +73,7 @@
       <button data-tab="questoes">Banco de Questões</button>
       <button data-tab="notas">Notas</button>
       <button data-tab="diagnostico">Diagnóstico</button>
+      <button data-tab="listas">📚 Listas</button>
       <button data-tab="modelos">💾 Listas Salvas</button>
       <button data-tab="guia">📖 Guia</button>
       <button data-tab="admin" id="tab-admin-btn" class="hidden">Admin</button>
@@ -93,7 +94,11 @@
   <div id="modal-box-2" class="modal-box"></div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<!-- Hospedado localmente (não via CDN externo): CDNs como cdnjs às vezes ficam bloqueados por
+     firewall de rede escolar, extensão de navegador ou bloqueador de anúncios, o que deixava a
+     exportação de PDF silenciosamente indisponível. Hospedado localmente também garante que o
+     Service Worker consiga cachear o arquivo, então a exportação funciona mesmo offline. -->
+<script src="js/vendor/html2pdf.bundle.min.js"></script>
 <script src="js/config.js"></script>
 <script src="js/api.js"></script>
 <script src="js/ui.js"></script>

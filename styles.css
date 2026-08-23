@@ -123,6 +123,7 @@ textarea { min-height: 100px; resize: vertical; }
 .toast { padding: 12px 16px; border-radius: 8px; box-shadow: var(--sombra); font-size: 0.9rem; text-align: center; }
 .toast-sucesso { background: #166534; color: white; }
 .toast-erro { background: #991b1b; color: white; }
+.toast-aviso { background: #92400e; color: white; }
 
 /* Questões */
 .questao-box { margin-bottom: 22px; }
@@ -166,8 +167,11 @@ details.card > button:last-child, details.card > *:not(summary):last-child { pad
 }
 .card-quadrado h4 { margin: 0; font-size: 1.05rem; }
 .card-quadrado-info { margin: 0; color: var(--cinza-texto); font-size: 0.85rem; line-height: 1.5; flex: 1; }
-.card-quadrado-acoes { display: flex; gap: 6px; }
-.card-quadrado-acoes .btn-primario { flex: 1; }
+/* Grid (não flex) pra que todo botão do card fique com a mesma largura/altura na mesma linha,
+   em vez de cada um ocupar só o espaço do próprio texto (o que deixava os cards com botões
+   de tamanhos e alinhamentos bem diferentes entre si). */
+.card-quadrado-acoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
+.card-quadrado-acoes .btn { width: 100%; }
 
 /* Guia de classificação */
 .guia-conteudo h3 { margin-top: 0; }
@@ -182,4 +186,25 @@ details.card > button:last-child, details.card > *:not(summary):last-child { pad
 @media (max-width: 480px) {
   main#app-main { padding: 10px; }
   .login-card { padding: 24px 16px; }
+}
+
+/* Margem de segurança só nas áreas de captura de PDF (exportarListaPdf/baixarPdfProva em app.js) —
+   corrige um bug real e confirmado do html2canvas: texto que preenche quase 100% da largura do
+   contêiner às vezes é CORTADO em vez de quebrar de linha, porque a medição de texto que o
+   html2canvas usa internamente diverge um pouco da medição real do navegador. Testado com texto
+   longo real: 92% de margem AINDA deixava a última palavra de uma linha ser cortada em alguns
+   casos — 85% se mostrou robusto nos testes. Escopado só em .pdf-export-area pra nunca mudar a
+   tela normal do app (onde esse bug não existe, pois é o navegador real quem renderiza, não o
+   html2canvas). */
+.pdf-export-area .questao-enunciado,
+.pdf-export-area .alternativa,
+.pdf-export-area .card,
+.pdf-export-area p {
+  max-width: 85%;
+}
+/* .alternativa é um flex container (display:flex) — o texto fica num <span> que, por ser item
+   flex, tem min-width:auto por padrão e por isso pode se recusar a encolher/quebrar linha mesmo
+   com o container mais estreito. min-width:0 libera a quebra de linha normalmente. */
+.pdf-export-area .alternativa > span {
+  min-width: 0;
 }
