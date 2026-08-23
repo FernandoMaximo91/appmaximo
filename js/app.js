@@ -2088,7 +2088,22 @@ async function confirmarImportarJSON() {
   let arr;
   try { arr = JSON.parse(document.getElementById('input-json-import').value); } catch (e) { toast('JSON inválido.', 'erro'); return; }
   const resultado = await chamarComLoading('questoes.importarJSON', { questoes: arr });
-  fecharModal(); toast(`${resultado.importadas} importadas, ${resultado.ignoradasDuplicadas} duplicadas ignoradas.`, 'sucesso'); renderBancoQuestoes();
+  fecharModal();
+  toast(`${resultado.importadas} importadas, ${resultado.ignoradasDuplicadas} duplicadas ignoradas.`, resultado.importadas > 0 || resultado.ignoradasDuplicadas === 0 ? 'sucesso' : 'erro');
+  renderBancoQuestoes();
+  // Se alguma questão foi marcada como duplicada, mostra CONTRA QUAL questão (nova ou já
+  // existente) ela bateu — sem isso, "duplicada" é só um número sem explicação, e um falso
+  // positivo em massa fica impossível de diagnosticar (ver conversa sobre o bug de 2026-08-23).
+  if ((resultado.duplicatasDetalhe || []).length > 0) {
+    abrirModal(`<h3>🔍 Por que essas questões foram consideradas duplicadas</h3>
+      <p style="color:var(--cinza-texto);">Cada questão nova abaixo bateu com uma já cadastrada (mesmo componente + ano + enunciado + alternativas, ignorando maiúsculas/espaços extras). Se o texto "já existente" parecer diferente do que você esperava — ou vier de dentro do mesmo lote que você acabou de enviar —, é sinal de falso positivo: me manda um print desta tela.</p>
+      ${resultado.duplicatasDetalhe.map(d => `
+        <div class="card" style="margin-bottom:8px;">
+          <strong>Nova:</strong> ${escapeHtml((d.novoText || '').slice(0, 220))}<br>
+          <strong>Já existente${d.bateuComOrigem === 'mesmo lote' ? ' (dentro do mesmo lote enviado agora)' : d.bateuComId ? ' — ID ' + escapeHtml(d.bateuComId) : ''}:</strong> ${escapeHtml((d.bateuComText || '').slice(0, 220))}
+        </div>`).join('')}
+      <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
+  }
 }
 
 // ---------- Importar questões com imagens EM LOTE (sem precisar abrir formulário questão por questão) ----------
