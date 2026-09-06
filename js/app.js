@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   ligarEventosLogin();
   document.getElementById('btn-logout').addEventListener('click', fazerLogout);
+  carregarEAplicarTema();
 
   const perfilSalvo = localStorage.getItem('appmaximo_perfil');
   if (Api.token() && perfilSalvo) {
@@ -20,6 +21,27 @@ document.addEventListener('DOMContentLoaded', () => {
     entrarNoPainel();
   }
 });
+
+/**
+ * Tema visual (06/09/2026) — pedido do Fernando: botão só pro Admin (ver renderAdmin) trocar a
+ * paleta de cores do app. Aplicado via atributo data-tema no <body> (ver styles.css). Guarda um
+ * cache local só pra já abrir com a cor certa antes da resposta do servidor chegar (evita o
+ * "flash" da cor padrão a cada carregamento); o servidor (tema.obter) continua sendo a fonte da
+ * verdade, então mesmo alguém que nunca trocou nada localmente vê o tema que o Admin escolheu.
+ */
+async function carregarEAplicarTema() {
+  const cache = localStorage.getItem('appmaximo_tema');
+  if (cache) aplicarTemaApp(cache);
+  try {
+    const dados = await Api.chamar('tema.obter', {});
+    aplicarTemaApp(dados.tema);
+  } catch (e) { /* sem servidor por enquanto — fica no cache/padrão */ }
+}
+function aplicarTemaApp(tema) {
+  if (!tema || tema === 'padrao') document.body.removeAttribute('data-tema');
+  else document.body.dataset.tema = tema;
+  localStorage.setItem('appmaximo_tema', tema || 'padrao');
+}
 
 function ligarEventosLogin() {
   document.querySelectorAll('#login-selecao .card-opcao').forEach(btn => {
@@ -91,7 +113,8 @@ function ligarTabsProfessor() {
 }
 function abrirAbaProfessor(nome) {
   document.querySelectorAll('#tabs-professor button').forEach(b => b.classList.toggle('tab-ativa', b.dataset.tab === nome));
-  const map = { turmas: renderTurmas, questoes: renderBancoQuestoes, notas: renderNotas, diagnostico: renderDiagnostico, listas: renderListasAtividades, modelos: renderListasModelo, guia: renderGuiaClassificacao, admin: renderAdmin };
+  // Notas e Diagnóstico saíram daqui em 06/09/2026 — agora vivem dentro de cada turma (ver abrirTurma).
+  const map = { turmas: renderTurmas, questoes: renderBancoQuestoes, listas: renderListasAtividades, modelos: renderListasModelo, guia: renderGuiaClassificacao, admin: renderAdmin };
   (map[nome] || renderTurmas)();
 }
 
@@ -102,7 +125,7 @@ function ligarTabsAluno() {
 }
 function abrirAbaAluno(nome) {
   document.querySelectorAll('#tabs-aluno button').forEach(b => b.classList.toggle('tab-ativa', b.dataset.tab === nome));
-  const map = { pendentes: renderAlunoPendentes, concluidas: renderAlunoConcluidas, redacoes: renderAlunoRedacoes, extra: renderAlunoAtividadeExtra, minhasAtividades: renderAlunoMinhasAtividades };
+  const map = { pendentes: renderAlunoPendentes, concluidas: renderAlunoConcluidas, redacoes: renderAlunoRedacoes, extra: renderAlunoAtividadeExtra, minhasAtividades: renderAlunoMinhasAtividades, minhasNotas: renderAlunoMinhasNotas };
   (map[nome] || renderAlunoPendentes)();
 }
 
@@ -164,9 +187,30 @@ async function renderAlunoRedacoes() {
       <div class="card lista-item">
         <div><strong>${escapeHtml(r.titulo)}</strong><br><small>${escapeHtml(r.tema || '')}${r.cronometroMin ? ' · ⏱ ' + r.cronometroMin + ' min' : ''}</small></div>
         ${r.respondida
-          ? `<span class="badge ${r.revisada ? 'badge-feito' : 'badge-info'}">${r.revisada ? '✓ Corrigida' : 'Enviada'}</span>`
+          ? (r.revisada
+              ? `<span style="display:flex;gap:6px;align-items:center;"><span class="badge badge-feito">✓ Corrigida</span><button class="btn btn-secundario btn-pequeno" onclick="abrirCorrecaoRedacaoAluno('${r.id}')">Ver correção</button></span>`
+              : `<span class="badge badge-info">Enviada — aguardando correção</span>`)
           : `<button class="btn btn-primario btn-pequeno" onclick="abrirRedacao('${r.id}')">Escrever</button>`}
       </div>`).join('');
+}
+
+/** Aluno vê a própria redação corrigida — pedido do Fernando em 06/09/2026 (antes não existia
+ * nenhuma forma do aluno ver a nota/comentário da redação, só o badge "Corrigida"). */
+async function abrirCorrecaoRedacaoAluno(redacaoId) {
+  const dados = await chamarComLoading('redacao.verMinhaCorrecao', { redacaoId });
+  const notaMaxima = (dados.criterios || []).reduce((s, c) => s + c.notaMaxima, 0);
+  abrirModal(`
+    <h3>${escapeHtml(dados.titulo)}</h3>
+    <p><strong>Tema:</strong> ${escapeHtml(dados.tema || 'Livre')}</p>
+    <details class="card" style="margin-top:8px;"><summary>Ver o que você escreveu</summary>
+      <p style="white-space:pre-wrap;margin-top:8px;">${escapeHtml(dados.texto)}</p>
+    </details>
+    <div class="card" style="margin-top:10px;">
+      <strong>Nota final: ${dados.notaFinal}${notaMaxima ? ' / ' + notaMaxima : ''}</strong>${dados.percentual !== null && dados.percentual !== undefined ? ` (${Math.round(dados.percentual * 100)}%)` : ''}
+      ${(dados.criterios || []).map(c => `<div class="lista-item"><span>${escapeHtml(c.nome)}</span><span>${(dados.notasPorCriterio || {})[c.chave] ?? '—'} / ${c.notaMaxima}</span></div>`).join('')}
+      ${dados.comentarioFinal ? `<p style="font-size:0.85rem;color:var(--cinza-texto);margin-top:8px;"><strong>Comentário do professor:</strong> ${escapeHtml(dados.comentarioFinal)}</p>` : ''}
+    </div>
+    <button class="btn btn-secundario btn-full" style="margin-top:10px;" onclick="fecharModal()">Fechar</button>`);
 }
 
 async function renderAlunoAtividadeExtra() {
@@ -230,7 +274,7 @@ async function corrigirAtividadeExtra() {
     ${resultado.resultado.map((r, i) => `
       <div class="card">
         <strong>${i + 1}.</strong> ${r.correta ? '✅ Correto' : '❌ Errado — resposta certa: ' + escapeHtml(r.gabarito)}
-        <p style="color:var(--cinza-texto);">${escapeHtml(r.explicacao)}</p>
+        <p style="color:var(--cinza-texto);">${formatarTextoQuestao(r.explicacao)}</p>
       </div>`).join('')}
     <button class="btn btn-secundario btn-full" onclick="renderAlunoAtividadeExtra()">Fechar</button>`;
 }
@@ -257,7 +301,7 @@ async function renderAlunoMinhasAtividades() {
             <strong>${j + 1}.</strong> ${formatarTextoQuestao(q.text)}
             ${q.bloomLevel ? `<span class="badge badge-info" style="margin-left:6px;">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
             <p>${r.correta ? '✅ Correto' : '❌ Errado — sua resposta: ' + escapeHtml(item.respostas[q.id] || '—') + ' · resposta certa: ' + escapeHtml(r.gabarito)}</p>
-            <p style="color:var(--cinza-texto);">${escapeHtml(r.explicacao)}</p>
+            <p style="color:var(--cinza-texto);">${formatarTextoQuestao(r.explicacao)}</p>
           </div>`;
         }).join('')}
       </div>
@@ -362,12 +406,30 @@ function _pararMonitorSaidaTela() {
   }
 }
 
-/** Gera um PDF da tela de revisão da atividade (cabeçalho + questões + resolução), direto no aparelho do aluno. */
+/** Gera um PDF da tela de revisão da atividade (cabeçalho + questões + resolução), direto no aparelho do aluno.
+ * IMPORTANTE: não exporta o elemento #area-prova-pdf diretamente — ele está visível na tela, sujeito
+ * ao scroll/layout do app, e isso é a causa raiz confirmada do PDF sair cortado (a renderização do
+ * html2canvas começava do meio da 1ª folha em vez do topo). A correção segue a mesma técnica já usada
+ * em exportarListaPdf: clona o conteúdo pra um elemento NOVO, sem position:fixed/absolute, no fim do
+ * <body> (fora da área visível), exporta esse clone, e remove em seguida. */
 function baixarPdfProva() {
   if (typeof html2pdf === 'undefined') { toast('Não foi possível gerar o PDF agora. Tente de novo em alguns segundos.', 'erro'); return; }
-  const area = document.getElementById('area-prova-pdf');
+  const origem = document.getElementById('area-prova-pdf');
+  if (!origem) { toast('Não foi possível gerar o PDF agora. Tente de novo.', 'erro'); return; }
+
+  const area = document.createElement('div');
+  area.id = 'area-prova-pdf-tmp';
+  area.className = 'pdf-export-area';
+  area.style.cssText = 'width:800px;background:white;padding:4px;';
+  area.innerHTML = origem.innerHTML;
+
   const nomeArquivo = `${(provaAtual.lista.titulo || 'atividade').replace(/[^\w\s-]/g, '')} - ${sessaoLocal.nome}.pdf`;
-  html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save();
+  mostrarLoading();
+  document.body.appendChild(area);
+  area.querySelectorAll('input, select, textarea, button').forEach(el => { el.disabled = true; });
+  html2pdf().set({ margin: 10, filename: nomeArquivo, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4' } }).from(area).save()
+    .catch(() => { toast('Não foi possível gerar o PDF agora. Tente de novo.', 'erro'); })
+    .finally(() => { esconderLoading(); area.remove(); });
 }
 
 function iniciarCronometro(minutos) {
@@ -553,6 +615,11 @@ async function abrirTurma(escolaId, turmaId) {
   turmaAtualDetalhe._escolaId = escolaId;
   const acesso = turmaAtualDetalhe._acesso || { total: true };
   const el = document.getElementById('professor-conteudo');
+  // Notas/Diagnóstico eram abas separadas no menu do professor — como o backend (Blocos.gs,
+  // Diagnostico.gs) já é organizado por turma, movemos pra dentro da própria tela da turma
+  // (pedido do Fernando em 06/09/2026). Carrega os períodos aqui porque a seção de Notas
+  // precisa deles montada já no primeiro innerHTML.
+  const secaoNotas = acesso.total ? await _htmlSecaoNotasTurma() : '';
   el.innerHTML = `
     <button class="btn btn-texto" onclick="abrirEscola('${escolaId}')">← Voltar</button>
     <h3>${escapeHtml(turmaAtualDetalhe.nome)}
@@ -573,12 +640,12 @@ async function abrirTurma(escolaId, turmaId) {
       <button class="btn btn-texto btn-pequeno" onclick="modalImportarAlunosJSON()">📥 Importar alunos via JSON</button>
     </details>
 
-    <h4 style="margin:18px 0 8px;">Listas de atividades</h4>
-    ${turmaAtualDetalhe.listas.length === 0 ? '<div class="estado-vazio">Nenhuma lista criada ainda.</div>' : ''}
-    <div class="grid-cards">
-      ${turmaAtualDetalhe.listas.map(l => _cardLista(l)).join('')}
+    <h4 style="margin:18px 0 8px;">Listas de atividades (por bloco)</h4>
+    ${_htmlGrupoListas()}
+    <div style="margin:8px 0 0;display:flex;gap:6px;flex-wrap:wrap;">
+      <button class="btn btn-texto btn-pequeno" onclick="modalNovaLista()">+ Nova lista</button>
+      ${acesso.total ? `<button class="btn btn-texto btn-pequeno" onclick="modalNovoBloco()">+ Novo bloco</button>` : ''}
     </div>
-    <button class="btn btn-texto btn-pequeno" onclick="modalNovaLista()">+ Nova lista</button>
 
     ${acesso.total ? `
     <div class="card" style="margin-top:16px;">
@@ -590,11 +657,9 @@ async function abrirTurma(escolaId, turmaId) {
         </span></div>`).join('')}
       <button class="btn btn-texto btn-pequeno" onclick="modalNovaRedacao()">+ Nova redação</button>
     </div>
-    <div class="card">
-      <h4>Blocos de notas</h4>
-      ${turmaAtualDetalhe.blocos.map(b => `<div class="lista-item"><span>${escapeHtml(b.nome)} <small>(${b.notaTotal} pts, ${b.modo === 'participacao' ? 'participação' : 'acerto'})</small></span></div>`).join('')}
-      <button class="btn btn-texto btn-pequeno" onclick="modalNovoBloco()">+ Novo bloco</button>
-    </div>
+    ${secaoNotas}
+    ${_htmlSecaoDiagnosticoTurma()}
+    ${_htmlSecaoPlanejamentoTurma()}
     <div class="card">
       <h4>Acesso de professores</h4>
       <p style="font-size:0.85rem;color:var(--cinza-texto);">Acesso total (mesmos acessos que você tem nesta turma):</p>
@@ -815,7 +880,10 @@ async function abrirDetalhesAluno(alunoId) {
   const pct = v => (v === null || v === undefined) ? '—' : Math.round(v * 100) + '%';
   const textoHipotese = { possivel_lacuna_base: '⚠️ Possível lacuna de base', dificuldade_conteudo_atual: '📍 Dificuldade no conteúdo atual' };
   abrirModal(`<h3>${escapeHtml(dados.aluno.nome)}</h3>
-    <p style="color:var(--cinza-texto);font-size:0.85rem;margin-top:-8px;">${escapeHtml(dados.aluno.usuario)}</p>
+    <p style="color:var(--cinza-texto);font-size:0.85rem;margin:-8px 0 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span>Login: <strong>${escapeHtml(dados.aluno.usuario)}</strong></span>
+      <button type="button" class="btn btn-texto btn-pequeno" style="padding:2px 8px;" onclick="modalTrocarSenhaAluno('${dados.aluno.id}')">🔑 Trocar senha</button>
+    </p>
     <h4>Listas de atividades</h4>
     ${dados.listas.length === 0 ? '<p style="color:var(--cinza-texto);font-size:0.85rem;">Nenhuma lista visível.</p>' : dados.listas.map(l => `
       <div class="lista-item">
@@ -824,13 +892,33 @@ async function abrirDetalhesAluno(alunoId) {
       </div>`).join('')}
     ${dados.redacoes.length > 0 ? `<h4>Redações</h4>
       ${dados.redacoes.map(r => `<div class="lista-item"><span>${escapeHtml(r.titulo)}</span>
-        <span class="badge ${r.revisada ? 'badge-feito' : (r.respondeu ? 'badge-info' : 'badge-pendente')}">${r.revisada ? 'Corrigida' : (r.respondeu ? 'Enviada' : 'Não entregue')}</span></div>`).join('')}` : ''}
+        <span>${r.revisada ? `<strong>${r.notaFinal}${r.percentual !== null && r.percentual !== undefined ? ' (' + Math.round(r.percentual * 100) + '%)' : ''}</strong> ` : ''}<span class="badge ${r.revisada ? 'badge-feito' : (r.respondeu ? 'badge-info' : 'badge-pendente')}">${r.revisada ? 'Corrigida' : (r.respondeu ? 'Enviada' : 'Não entregue')}</span></span></div>`).join('')}` : ''}
     ${dados.diagnostico.length > 0 ? `<h4>Diagnóstico</h4>
       ${dados.diagnostico.map(d => `<div class="lista-item">
         <span>${escapeHtml(d.conteudo)}</span>
         <span>${d.hipotese !== 'indeterminado' ? `<span class="badge badge-info">${textoHipotese[d.hipotese] || escapeHtml(d.hipotese)}</span>` : ''}${_htmlHipoteseDimensao(d.hipoteseDimensao)}</span>
       </div>`).join('')}` : ''}
     <button class="btn btn-secundario btn-full" onclick="fecharModal()">Fechar</button>`);
+}
+
+/**
+ * Trocar a senha do aluno direto da tela de Detalhes (sem precisar fechar e ir em "Editar").
+ * A senha fica sempre com hash (SHA-256+salt) no banco — nunca é possível "ver" a senha atual,
+ * só definir uma nova (combinado com o Fernando em 06/09/2026). Usa o modal empilhado (modal-box-2)
+ * pra não perder o estado do modal de Detalhes que já estava aberto por baixo.
+ */
+function modalTrocarSenhaAluno(alunoId) {
+  abrirModal2(`<h3>Trocar senha</h3>
+    <p style="font-size:0.85rem;color:var(--cinza-texto);">Por segurança, a senha atual do aluno não pode ser exibida — só redefinida.</p>
+    <label>Nova senha</label><input id="input-nova-senha-aluno" type="text" autocomplete="new-password">
+    <button class="btn btn-primario btn-full" onclick="confirmarTrocarSenhaAluno('${alunoId}')">Salvar nova senha</button>`);
+}
+async function confirmarTrocarSenhaAluno(alunoId) {
+  const novaSenha = document.getElementById('input-nova-senha-aluno').value;
+  if (!novaSenha || novaSenha.trim().length < 4) { toast('Digite uma senha com pelo menos 4 caracteres.', 'erro'); return; }
+  await chamarComLoading('turmas.editarAluno', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, alunoId, novaSenha });
+  fecharModal2();
+  toast('Senha atualizada.', 'sucesso');
 }
 
 // ---------- Acesso de professores (compartilhamento total / por componente curricular) ----------
@@ -1321,6 +1409,7 @@ async function confirmarGerarPorIA() {
   window._questoesIAPreview = resultado.questoes.map(q => ({ ...q, incluir: true }));
   document.getElementById('preview-gerar-ia').innerHTML = `
     <p><strong>${resultado.total} questões geradas.</strong> Revise antes de salvar:</p>
+    ${resultado.descartadas ? `<div class="alerta alerta-atencao">${resultado.descartadas} questão(ões) foram descartadas automaticamente por sair sem enunciado válido da IA. Peça mais questões se precisar completar a quantidade.</div>` : ''}
     ${window._questoesIAPreview.map((q, i) => `
       <div class="card">
         <label class="alternativa"><input type="checkbox" checked onchange="window._questoesIAPreview[${i}].incluir=this.checked"><span>${formatarTextoQuestao(q.text).slice(0, 150)}...</span></label>
@@ -1495,6 +1584,9 @@ function modalNovaRedacao() {
       <textarea id="input-red-criterios-custom" placeholder="Ortografia: 30&#10;Argumentação: 40"></textarea>
     </div>
     <label>Cronômetro (minutos, opcional)</label><input id="input-red-cronometro" type="number">
+    <label>Texto/pontos de referência (opcional)</label>
+    <p style="font-size:0.8rem;color:var(--cinza-texto);margin:0 0 6px;">Um texto-modelo ou os pontos que a redação deveria abordar — nunca é mostrado ao aluno, só ajuda a IA a sugerir uma correção melhor.</p>
+    <textarea id="input-red-texto-modelo"></textarea>
     <button class="btn btn-primario btn-full" onclick="salvarNovaRedacao()">Criar</button>`);
 }
 async function salvarNovaRedacao() {
@@ -1509,7 +1601,8 @@ async function salvarNovaRedacao() {
     }).filter(Boolean);
   }
   const cronometroMin = document.getElementById('input-red-cronometro').value || null;
-  await chamarComLoading('redacao.criar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, titulo, tema, criterio, criteriosCustom, cronometroMin });
+  const textoModelo = document.getElementById('input-red-texto-modelo').value;
+  await chamarComLoading('redacao.criar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, titulo, tema, criterio, criteriosCustom, cronometroMin, textoModelo });
   fecharModal(); toast('Redação criada.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
 }
 
@@ -1520,12 +1613,27 @@ async function abrirCorrecaoRedacoes(redacaoId) {
     ${entregas.length === 0 ? '<p>Nenhum aluno entregou ainda.</p>' : entregas.map(a => {
       const r = a.redacoesRespondidas[redacaoId];
       return `<div class="card">
-        <strong>${escapeHtml(a.nome)}</strong> ${r.revisadoProfessor ? '<span class="badge badge-feito">Corrigida</span>' : ''}
+        <strong>${escapeHtml(a.nome)}</strong> ${r.revisadoProfessor ? `<span class="badge badge-feito">Corrigida — nota ${r.notaFinal}${r.percentual !== null && r.percentual !== undefined ? ' (' + Math.round(r.percentual * 100) + '%)' : ''}</span>` : ''}
         <p style="max-height:100px;overflow-y:auto;background:var(--cinza-fundo);padding:8px;border-radius:6px;">${escapeHtml(r.texto)}</p>
         ${!r.revisadoProfessor ? `<button class="btn btn-secundario btn-pequeno" onclick="pedirCorrecaoIA('${redacaoId}','${a.id}')">✨ Pedir sugestão da IA (opcional)</button>` : ''}
-        <div id="correcao-area-${a.id}">${!r.revisadoProfessor ? _htmlRevisaoRedacao(redacao, a.id, r.correcaoIA || null, redacaoId) : ''}</div>
+        <div id="correcao-area-${a.id}">${!r.revisadoProfessor ? _htmlRevisaoRedacao(redacao, a.id, r.correcaoIA || null, redacaoId) : _htmlNotaFinalRedacao(redacao, r)}</div>
       </div>`;
     }).join('')}`);
+}
+
+/** Nota já confirmada de uma redação — a causa raiz do "nota de redação não fica acessível pro
+ * professor" (reportado em 06/09/2026) era esta tela só mostrar o badge "Corrigida" e nada mais
+ * depois de revisada: nem a nota final, nem a nota por critério, nem o comentário ficavam visíveis
+ * de novo. Agora mostra tudo, só que travado (sem inputs pra editar por acidente). */
+function _htmlNotaFinalRedacao(redacao, r) {
+  const criterios = redacao.criterio === 'enem'
+    ? [{ chave: 'c1', nome: 'Domínio da norma culta' }, { chave: 'c2', nome: 'Compreensão do tema' }, { chave: 'c3', nome: 'Organização de argumentos' }, { chave: 'c4', nome: 'Mecanismos linguísticos' }, { chave: 'c5', nome: 'Proposta de intervenção' }]
+    : (redacao.criteriosCustom || []);
+  return `<div class="alerta alerta-sucesso" style="margin-top:6px;">
+      <strong>Nota final: ${r.notaFinal}</strong>${r.percentual !== null && r.percentual !== undefined ? ` (${Math.round(r.percentual * 100)}%)` : ''}
+    </div>
+    ${criterios.map(c => `<div class="lista-item"><span>${escapeHtml(c.nome)}</span><span>${(r.notasPorCriterio || {})[c.chave] ?? '—'}</span></div>`).join('')}
+    ${r.comentarioFinal ? `<p style="font-size:0.85rem;color:var(--cinza-texto);"><strong>Comentário:</strong> ${escapeHtml(r.comentarioFinal)}</p>` : ''}`;
 }
 
 /**
@@ -1566,13 +1674,16 @@ async function confirmarRevisaoRedacao(redacaoId, alunoId, botao) {
 
 async function abrirCorrecaoDiscursivas(listaId, tituloLista) {
   const { pendentes } = await chamarComLoading('questoes.discursivasPendentes', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, listaId });
+  window._discursivasPendentesAtual = pendentes; // guardado aqui (em vez de passar texto cru pelo onclick)
+  // pra não quebrar com aspas/quebras de linha na resposta do aluno, e porque agora também carrega
+  // respostaEsperada (pode ser um texto longo) — ver pedirSugestaoDiscursivaIA.
   abrirModal(`<h3>Discursivas pendentes: ${escapeHtml(tituloLista)}</h3>
     ${pendentes.length === 0 ? '<p>Nenhuma resposta discursiva pendente de correção nesta lista.</p>' : pendentes.map((p, i) => `
       <div class="card" id="discursiva-item-${i}">
         <strong>${escapeHtml(p.alunoNome)}</strong>
         <p style="font-size:0.85rem;color:var(--cinza-texto);">${formatarTextoQuestao(p.enunciado)}</p>
         <p style="max-height:100px;overflow-y:auto;background:var(--cinza-fundo);padding:8px;border-radius:6px;">${escapeHtml(p.resposta) || '<em>(sem resposta)</em>'}</p>
-        <button class="btn btn-secundario btn-pequeno" onclick="pedirSugestaoDiscursivaIA(${i}, '${escapeHtml(p.enunciado).replace(/'/g, "\\'")}', '${escapeHtml(p.resposta).replace(/'/g, "\\'")}')">Pedir sugestão da IA</button>
+        <button class="btn btn-secundario btn-pequeno" onclick="pedirSugestaoDiscursivaIA(${i})">Pedir sugestão da IA${p.respostaEsperada ? ' (com resposta esperada)' : ''}</button>
         <div id="discursiva-sugestao-${i}"></div>
         <label>Nota (0 a 10)</label><input type="number" min="0" max="10" step="0.5" id="discursiva-nota-${i}">
         <label>Comentário (opcional)</label><textarea id="discursiva-comentario-${i}"></textarea>
@@ -1580,8 +1691,9 @@ async function abrirCorrecaoDiscursivas(listaId, tituloLista) {
       </div>`).join('')}`);
 }
 
-async function pedirSugestaoDiscursivaIA(i, enunciado, resposta) {
-  const sugestao = await chamarComLoading('questoes.sugerirCorrecaoDiscursivaIA', { enunciado, resposta });
+async function pedirSugestaoDiscursivaIA(i) {
+  const p = window._discursivasPendentesAtual[i];
+  const sugestao = await chamarComLoading('questoes.sugerirCorrecaoDiscursivaIA', { enunciado: p.enunciado, resposta: p.resposta, respostaEsperada: p.respostaEsperada || '' });
   document.getElementById('discursiva-sugestao-' + i).innerHTML = `<div class="alerta alerta-info">Sugestão da IA: nota ${(sugestao.nota * 10).toFixed(1)} — ${escapeHtml(sugestao.comentario)}</div>`;
   document.getElementById('discursiva-nota-' + i).value = (sugestao.nota * 10).toFixed(1);
   document.getElementById('discursiva-comentario-' + i).value = sugestao.comentario;
@@ -1836,7 +1948,7 @@ async function _modalFormQuestao(q) {
     <div id="preview-imagens-questao">${_previewImagens(window._imagensQuestaoAtual, 'questao')}</div>
     <div id="editor-tipo-especifico"></div>
     <label style="margin-top:18px;">Resolução (explicação — só aparece pro aluno quando você liberar)</label>
-    <p style="font-size:0.8rem;color:var(--cinza-texto);margin:0 0 6px;">Preencha junto com a questão: a resolução comentada é o que mais ajuda o aluno quando a correção for liberada.</p>
+    <p style="font-size:0.8rem;color:var(--cinza-texto);margin:0 0 6px;">Preencha junto com a questão: a resolução comentada é o que mais ajuda o aluno quando a correção for liberada. Se envolver cálculo/equação, escreva cada passo em uma linha (aperte Enter entre eles) — ex: "5x-5=2x+19" numa linha, "5x-2x=19+5" na próxima, e assim por diante até "x=8".</p>
     <textarea id="input-q-resolucao" class="campo-matematico">${escapeHtml((q && q.resolucao) || '')}</textarea>
     <label>Imagens da resolução</label>
     <input type="file" accept="image/*" onchange="adicionarImagem(this, 'resolucao')">
@@ -2022,7 +2134,8 @@ async function salvarQuestao(id) {
     text: document.getElementById('input-q-text').value,
     resolucao: document.getElementById('input-q-resolucao').value, alternativas, gabarito,
     objetivoAprendizagem: document.getElementById('input-q-objetivo').value,
-    imagens: window._imagensQuestaoAtual || [], resolucaoImagens: window._imagensResolucaoAtual || []
+    imagens: window._imagensQuestaoAtual || [], resolucaoImagens: window._imagensResolucaoAtual || [],
+    respostaEsperada: tipo === 'discursiva' ? (document.getElementById('input-q-resposta-esperada') || {}).value || '' : ''
   };
   try {
     await chamarComLoading(id ? 'questoes.editar' : 'questoes.criar', id ? { id, ...dados } : dados);
@@ -2237,6 +2350,7 @@ async function confirmarImportarVestibular() {
   window._questoesVestibularPreview = resultado.questoes.map(q => ({ ...q, tipo: 'multipla', incluir: true }));
   document.getElementById('preview-import-vestibular').innerHTML = `
     <p><strong>${resultado.total} questões encontradas.</strong> Revise antes de confirmar:</p>
+    ${resultado.descartadas ? `<div class="alerta alerta-atencao">${resultado.descartadas} questão(ões) foram descartadas automaticamente por sair sem enunciado válido da IA — reveja o arquivo original se sentir falta de alguma.</div>` : ''}
     ${window._questoesVestibularPreview.map((q, i) => `
       <div class="card">
         <label class="alternativa"><input type="checkbox" checked onchange="window._questoesVestibularPreview[${i}].incluir=this.checked"><span>${formatarTextoQuestao(q.text).slice(0, 150)}...</span></label>
@@ -2252,43 +2366,76 @@ async function confirmarSalvarVestibular() {
 }
 
 // ======================================================================
-// PROFESSOR — NOTAS
+// PROFESSOR — LISTAS AGRUPADAS EM BLOCOS (dentro da turma, ver abrirTurma)
 // ======================================================================
 
-async function renderNotas() {
-  const el = document.getElementById('professor-conteudo');
-  const escolas = escolasCache || await chamarComLoading('turmas.listarEscolas', {});
+/** Agrupa as listas da turma pelos Blocos de notas que as referenciam (bloco.itens tipo:'lista').
+ * Listas que não estão em nenhum bloco caem no grupo "Bloco Geral" (pedido do Fernando em 06/09/2026). */
+function _agruparListasPorBloco() {
+  const listasPorId = {};
+  turmaAtualDetalhe.listas.forEach(l => { listasPorId[l.id] = l; });
+  const idsComBloco = new Set();
+  const grupos = (turmaAtualDetalhe.blocos || []).map(b => {
+    const listasDoBloco = (b.itens || [])
+      .filter(i => i.tipo === 'lista' && listasPorId[i.refId])
+      .map(i => { idsComBloco.add(i.refId); return listasPorId[i.refId]; });
+    return { id: b.id, nome: b.nome, notaTotal: b.notaTotal, modo: b.modo, listas: listasDoBloco };
+  });
+  const listasSemBloco = turmaAtualDetalhe.listas.filter(l => !idsComBloco.has(l.id));
+  return { grupos, listasSemBloco };
+}
+
+/** Cada bloco (e o "Bloco Geral") vira um menu recolhível (<details>, mesmo padrão já usado em
+ * "Alunos") com as listas daquele bloco dentro, no mesmo card de lista (_cardLista) de sempre. */
+function _htmlGrupoListas() {
+  const { grupos, listasSemBloco } = _agruparListasPorBloco();
+  const htmlBloco = (nome, infoExtra, listas, abertoPorPadrao) => `
+    <details class="card" ${abertoPorPadrao ? 'open' : ''}>
+      <summary>📁 ${escapeHtml(nome)}${infoExtra ? ` <small style="color:var(--cinza-texto);font-weight:400;">— ${infoExtra}</small>` : ''} <span class="badge badge-info">${listas.length}</span></summary>
+      <div class="grid-cards" style="margin-top:10px;">
+        ${listas.length === 0 ? '<div class="estado-vazio">Nenhuma lista neste bloco ainda.</div>' : listas.map(l => _cardLista(l)).join('')}
+      </div>
+    </details>`;
+  const blocosHtml = grupos.map(g => htmlBloco(g.nome, `${g.notaTotal} pts, ${g.modo === 'participacao' ? 'participação' : 'acerto'}`, g.listas, false)).join('');
+  const geralHtml = htmlBloco('Bloco Geral', 'listas sem bloco definido', listasSemBloco, grupos.length === 0);
+  return blocosHtml + geralHtml;
+}
+
+// ======================================================================
+// PROFESSOR — NOTAS (dentro da turma, ver abrirTurma — antes era aba separada)
+// ======================================================================
+
+async function _htmlSecaoNotasTurma() {
   const periodos = await chamarComLoading('periodos.listar', {});
-  const todasTurmas = escolas.escolas.flatMap(e => e.turmas.map(t => ({ ...t, escolaId: e.id })));
-  el.innerHTML = `
-    <div class="card">
+  return `<details class="card">
+    <summary>📊 Notas</summary>
+    <div style="margin-top:10px;">
       <h4>Criar período de avaliação</h4>
       <label>Nome</label><input id="input-periodo-nome" placeholder="1º Bimestre">
       <label>Início</label><input id="input-periodo-inicio" type="date">
       <label>Término</label><input id="input-periodo-termino" type="date">
-      <button class="btn btn-secundario" onclick="criarPeriodoUI()">Criar período</button>
+      <button class="btn btn-secundario btn-pequeno" onclick="criarPeriodoDaTurmaAtual()">Criar período</button>
     </div>
-    <div class="card">
-      <h4>Ver notas por turma</h4>
-      <label>Turma</label>
-      <select id="select-turma-notas">${todasTurmas.map(t => `<option value="${t.escolaId}|${t.id}">${escapeHtml(t.nome)}</option>`).join('')}</select>
+    <div style="margin-top:14px;">
       <label>Período</label>
-      <select id="select-periodo-notas">${periodos.periodos.map(p => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join('')}</select>
-      <button class="btn btn-primario" onclick="verNotasTurma()">Ver notas</button>
+      <select id="select-periodo-notas">${periodos.periodos.length === 0 ? '<option value="">Crie um período acima primeiro</option>' : periodos.periodos.map(p => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join('')}</select>
+      <button class="btn btn-primario btn-pequeno" onclick="verNotasDaTurmaAtual()">Ver notas</button>
       <div id="tabela-notas-container"></div>
-    </div>`;
+    </div>
+  </details>`;
 }
-async function criarPeriodoUI() {
+async function criarPeriodoDaTurmaAtual() {
   const nome = document.getElementById('input-periodo-nome').value;
   const inicio = document.getElementById('input-periodo-inicio').value;
   const termino = document.getElementById('input-periodo-termino').value;
   await chamarComLoading('periodos.criar', { nome, inicio, termino });
-  toast('Período criado.', 'sucesso'); renderNotas();
+  toast('Período criado.', 'sucesso');
+  abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
 }
-async function verNotasTurma() {
-  const [escolaId, turmaId] = document.getElementById('select-turma-notas').value.split('|');
+async function verNotasDaTurmaAtual() {
   const periodoId = document.getElementById('select-periodo-notas').value;
-  const dados = await chamarComLoading('blocos.calcularNotasTurma', { escolaId, turmaId, periodoId });
+  if (!periodoId) { toast('Crie um período de avaliação primeiro.', 'erro'); return; }
+  const dados = await chamarComLoading('blocos.calcularNotasTurma', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, periodoId });
   const container = document.getElementById('tabela-notas-container');
   if (dados.blocos.length === 0) { container.innerHTML = '<p>Nenhum bloco cadastrado para este período.</p>'; return; }
   container.innerHTML = `<table class="tabela-notas"><thead><tr><th>Aluno</th>${dados.blocos.map(b => `<th>${escapeHtml(b.nome)} (${b.notaTotal})</th>`).join('')}<th>Total</th></tr></thead>
@@ -2296,24 +2443,60 @@ async function verNotasTurma() {
 }
 
 // ======================================================================
-// PROFESSOR — DIAGNÓSTICO
+// ALUNO — NOTAS (aba "Notas" no painel do aluno, pra acompanhar o próprio
+// desenvolvimento — pedido do Fernando em 06/09/2026)
 // ======================================================================
 
-async function renderDiagnostico() {
-  const el = document.getElementById('professor-conteudo');
-  const escolas = escolasCache || await chamarComLoading('turmas.listarEscolas', {});
-  const todasTurmas = escolas.escolas.flatMap(e => e.turmas.map(t => ({ ...t, escolaId: e.id })));
-  el.innerHTML = `
-    <div class="card">
-      <label>Turma</label>
-      <select id="select-turma-diagnostico">${todasTurmas.map(t => `<option value="${t.id}">${escapeHtml(t.nome)}</option>`).join('')}</select>
-      <button class="btn btn-primario" onclick="verDiagnosticoTurma()">Ver diagnóstico</button>
-    </div>
-    <div id="diagnostico-resultado"></div>`;
+async function renderAlunoMinhasNotas() {
+  const el = document.getElementById('aluno-conteudo');
+  try {
+    const periodos = await chamarComLoading('periodos.listar', {});
+    if (periodos.periodos.length === 0) {
+      el.innerHTML = '<div class="estado-vazio">Ainda não há períodos de avaliação cadastrados pelo professor.</div>';
+      return;
+    }
+    el.innerHTML = `<div class="card">
+      <label>Período</label>
+      <select id="select-periodo-minhas-notas">${periodos.periodos.map(p => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join('')}</select>
+      <button class="btn btn-primario btn-pequeno" onclick="verMinhasNotas()">Ver notas</button>
+      <div id="minhas-notas-resultado"></div>
+    </div>`;
+    verMinhasNotas();
+  } catch (e) { el.innerHTML = '<div class="estado-vazio">Não foi possível carregar.</div>'; }
 }
-async function verDiagnosticoTurma() {
-  const turmaId = document.getElementById('select-turma-diagnostico').value;
-  const dados = await chamarComLoading('diagnostico.relatorioTurma', { turmaId });
+
+async function verMinhasNotas() {
+  const periodoId = document.getElementById('select-periodo-minhas-notas').value;
+  const container = document.getElementById('minhas-notas-resultado');
+  if (!periodoId) return;
+  const dados = await chamarComLoading('blocos.minhasNotas', { periodoId });
+  if (dados.notasPorBloco.length === 0) {
+    container.innerHTML = '<p style="margin-top:10px;">Nenhum bloco de notas cadastrado para este período ainda.</p>';
+    return;
+  }
+  container.innerHTML = `
+    <table class="tabela-notas" style="margin-top:10px;">
+      <thead><tr><th>Bloco</th><th>Nota</th></tr></thead>
+      <tbody>${dados.notasPorBloco.map(b => `<tr><td>${escapeHtml(b.nome)}</td><td>${b.notaObtida} / ${b.notaTotal}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td><strong>Total do período</strong></td><td><strong>${dados.totalPeriodo} / ${dados.totalMaximo}</strong></td></tr></tfoot>
+    </table>`;
+}
+
+// ======================================================================
+// PROFESSOR — DIAGNÓSTICO (dentro da turma, ver abrirTurma — antes era aba separada)
+// ======================================================================
+
+function _htmlSecaoDiagnosticoTurma() {
+  return `<details class="card">
+    <summary>🔎 Diagnóstico</summary>
+    <div style="margin-top:10px;">
+      <button class="btn btn-primario btn-pequeno" onclick="verDiagnosticoDaTurmaAtual()">Ver diagnóstico</button>
+      <div id="diagnostico-resultado"></div>
+    </div>
+  </details>`;
+}
+async function verDiagnosticoDaTurmaAtual() {
+  const dados = await chamarComLoading('diagnostico.relatorioTurma', { turmaId: turmaAtualDetalhe.id });
   const container = document.getElementById('diagnostico-resultado');
   if (dados.alunos.length === 0) { container.innerHTML = '<div class="estado-vazio">Sem indícios de dificuldade registrados ainda.</div>'; return; }
   const textoHipotese = { possivel_lacuna_base: '⚠️ Possível lacuna de base', dificuldade_conteudo_atual: '📍 Dificuldade no conteúdo atual' };
@@ -2326,6 +2509,91 @@ async function verDiagnosticoTurma() {
           <span>${d.hipotese !== 'indeterminado' ? `<span class="badge badge-info">${textoHipotese[d.hipotese] || d.hipotese}</span>` : ''}${_htmlHipoteseDimensao(d.hipoteseDimensao)}</span>
         </div>`).join('')}
     </div>`).join('') + `<p style="font-size:0.8rem;color:var(--cinza-texto);">Hipótese estatística baseada em padrão de erro — não é um diagnóstico exato.</p>`;
+}
+
+// ======================================================================
+// PROFESSOR — PLANEJAMENTO DE AULA (dentro da turma, ver abrirTurma) — novo em 06/09/2026
+// ======================================================================
+
+function _htmlSecaoPlanejamentoTurma() {
+  const itens = turmaAtualDetalhe.planejamentos || [];
+  return `<details class="card">
+    <summary>📋 Planejamento de aula <span class="badge badge-info">${itens.length}</span></summary>
+    <div style="margin-top:10px;">
+      ${itens.length === 0 ? '<div class="estado-vazio">Nenhum planejamento cadastrado ainda.</div>' : itens.map(p => `
+        <div class="lista-item">
+          <span><strong>${escapeHtml(p.titulo)}</strong><br>
+            <small>${p.data ? _formatarDataSimples(p.data) + ' · ' : ''}${escapeHtml(p.componente || 'sem componente definido')}</small>
+          </span>
+          <span>
+            <button class="btn btn-pequeno btn-secundario" onclick="abrirPlanejamento('${p.id}')">Ver/Editar</button>
+            <button class="btn btn-pequeno btn-perigo" onclick="excluirPlanejamento('${p.id}', '${escapeHtml(p.titulo).replace(/'/g, "\\'")}')">Excluir</button>
+          </span>
+        </div>`).join('')}
+      <button class="btn btn-texto btn-pequeno" onclick="modalNovoPlanejamento()">+ Novo planejamento</button>
+    </div>
+  </details>`;
+}
+
+function _formatarDataSimples(iso) {
+  if (!iso) return '';
+  const [ano, mes, dia] = iso.split('-');
+  return (ano && mes && dia) ? `${dia}/${mes}/${ano}` : iso;
+}
+
+function _htmlFormPlanejamento(p) {
+  return `<label>Título / conteúdo da aula</label><input id="input-plan-titulo" value="${escapeHtml((p && p.titulo) || '')}" placeholder="Ex: Equações do 1º grau">
+    <label>Data (opcional)</label><input id="input-plan-data" type="date" value="${escapeHtml((p && p.data) || '')}">
+    <label>Componente curricular (opcional)</label>${renderSelectComponente('input-plan-comp', (p && p.componente) || '')}
+    <label>Objetivos de aprendizagem</label><textarea id="input-plan-objetivos" placeholder="O que o aluno deve ser capaz de fazer ao final da aula">${escapeHtml((p && p.objetivos) || '')}</textarea>
+    <label>Conteúdo / desenvolvimento da aula</label><textarea id="input-plan-conteudo" placeholder="Passo a passo do que será trabalhado">${escapeHtml((p && p.conteudo) || '')}</textarea>
+    <label>Metodologia</label><textarea id="input-plan-metodologia" placeholder="Como a aula será conduzida (exposição, atividade em grupo, etc.)">${escapeHtml((p && p.metodologia) || '')}</textarea>
+    <label>Recursos didáticos</label><input id="input-plan-recursos" value="${escapeHtml((p && p.recursos) || '')}" placeholder="Quadro, slides, lista impressa...">
+    <label>Avaliação</label><textarea id="input-plan-avaliacao" placeholder="Como será verificado se o objetivo foi atingido">${escapeHtml((p && p.avaliacao) || '')}</textarea>
+    <label>Observações</label><textarea id="input-plan-observacoes">${escapeHtml((p && p.observacoes) || '')}</textarea>`;
+}
+
+async function modalNovoPlanejamento() {
+  await carregarComponentes();
+  abrirModal(`<h3>Novo planejamento de aula</h3>${_htmlFormPlanejamento(null)}
+    <button class="btn btn-primario btn-full" onclick="salvarNovoPlanejamento()">Criar planejamento</button>`);
+}
+function _lerFormPlanejamento() {
+  return {
+    titulo: document.getElementById('input-plan-titulo').value,
+    data: document.getElementById('input-plan-data').value,
+    componente: document.getElementById('input-plan-comp').value,
+    objetivos: document.getElementById('input-plan-objetivos').value,
+    conteudo: document.getElementById('input-plan-conteudo').value,
+    metodologia: document.getElementById('input-plan-metodologia').value,
+    recursos: document.getElementById('input-plan-recursos').value,
+    avaliacao: document.getElementById('input-plan-avaliacao').value,
+    observacoes: document.getElementById('input-plan-observacoes').value
+  };
+}
+async function salvarNovoPlanejamento() {
+  const dados = _lerFormPlanejamento();
+  if (!dados.titulo.trim()) { toast('Dê um título ao planejamento.', 'erro'); return; }
+  await chamarComLoading('planejamentos.criar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, ...dados });
+  fecharModal(); toast('Planejamento criado.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+async function abrirPlanejamento(planejamentoId) {
+  const p = (turmaAtualDetalhe.planejamentos || []).find(x => x.id === planejamentoId);
+  if (!p) return;
+  await carregarComponentes();
+  abrirModal(`<h3>Editar planejamento</h3>${_htmlFormPlanejamento(p)}
+    <button class="btn btn-primario btn-full" onclick="salvarEdicaoPlanejamento('${planejamentoId}')">Salvar alterações</button>`);
+}
+async function salvarEdicaoPlanejamento(planejamentoId) {
+  const dados = _lerFormPlanejamento();
+  if (!dados.titulo.trim()) { toast('Dê um título ao planejamento.', 'erro'); return; }
+  await chamarComLoading('planejamentos.editar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, planejamentoId, ...dados });
+  fecharModal(); toast('Planejamento atualizado.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+async function excluirPlanejamento(planejamentoId, titulo) {
+  if (!confirm(`Excluir o planejamento "${titulo}"?`)) return;
+  await chamarComLoading('planejamentos.deletar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, planejamentoId });
+  toast('Planejamento excluído.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
 }
 
 /** Badge da 3ª hipótese de diagnóstico (comparação de desempenho entre Dimensões do Conhecimento do mesmo conteúdo). */
@@ -2417,7 +2685,7 @@ const GUIA_CLASSIFICACAO_HTML = `
   <li>2. Nível de Bloom E Dimensão do Conhecimento escolhidos (use o botão de sugestão da IA como ponto de partida, mas revise os dois).</li>
   <li>3. Se o conteúdo tiver um pré-requisito claro, anote-o (mesmo que hoje seja só numa lista sua, até a tela de cadastro formal existir).</li>
   <li>4. Gabarito conferido — principalmente em Relacione, Classifique e Ordenar, onde é fácil errar a ordem/pareamento.</li>
-  <li>5. Resolução (explicação) preenchida quando possível — ela é o que mais ajuda o aluno quando você libera a correção.</li>
+  <li>5. Resolução (explicação) preenchida quando possível — ela é o que mais ajuda o aluno quando você libera a correção. Se envolver cálculo/equação/procedimento, escreva cada passo numa linha separada (Enter entre eles) em vez de tudo corrido — o app já exibe cada linha separadamente.</li>
   <li>6. Pra Matemática, considere preencher também Ano/Série e Unidade Temática — são os campos que alimentam os filtros novos do banco de questões.</li>
 </ul>
 
@@ -2436,14 +2704,39 @@ const GUIA_CLASSIFICACAO_HTML = `
 // PROFESSOR — ADMIN
 // ======================================================================
 
+// Rótulos e um preview de cor (só decorativo, pra ilustrar o botão) por tema — mantidos junto do
+// front porque TEMAS_APP_VALIDOS (Relatorios.gs) é a fonte da verdade real; se um tema novo for
+// adicionado só no backend, ele ainda aparece aqui (rótulo cai pro id) via _rotuloTema().
+const TEMAS_APP_LABELS = {
+  padrao: { nome: 'Padrão (azul)', cor: '#2563eb' },
+  oceano: { nome: 'Oceano', cor: '#0891b2' },
+  sunset: { nome: 'Sunset', cor: '#ea580c' },
+  floresta: { nome: 'Floresta', cor: '#15803d' },
+  'roxo-noite': { nome: 'Roxo noite (escuro)', cor: '#7c3aed' }
+};
+function _rotuloTema(id) { return (TEMAS_APP_LABELS[id] || {}).nome || id; }
+
 async function renderAdmin() {
   const el = document.getElementById('professor-conteudo');
   try {
     const stats = await chamarComLoading('admin.estatisticas', {});
+    const tema = await Api.chamar('tema.obter', {});
+    const temaAtual = tema.tema || 'padrao';
     el.innerHTML = `
       <div class="card">
         <h4>Estatísticas gerais</h4>
         <p>${stats.totalProfessores} professores · ${stats.totalEscolas} escolas · ${stats.totalTurmas} turmas · ${stats.totalAlunos} alunos · ${stats.totalQuestoes} questões</p>
+      </div>
+      <div class="card">
+        <h4>🎨 Aparência do AppMaximo</h4>
+        <p style="color:var(--cinza-texto);">Escolha a paleta de cores do app — vale para todo mundo (professores e alunos), a partir do próximo carregamento da página.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;">
+          ${(tema.temasDisponiveis || Object.keys(TEMAS_APP_LABELS)).map(id => `
+            <button class="btn ${id === temaAtual ? 'btn-primario' : 'btn-secundario'} btn-pequeno" onclick="escolherTemaApp('${id}')" style="display:flex;align-items:center;gap:6px;">
+              <span style="width:12px;height:12px;border-radius:50%;background:${(TEMAS_APP_LABELS[id] || {}).cor || '#999'};display:inline-block;"></span>
+              ${escapeHtml(_rotuloTema(id))}${id === temaAtual ? ' ✓' : ''}
+            </button>`).join('')}
+        </div>
       </div>
       <div class="card">
         <h4>Novo professor/admin</h4>
@@ -2460,6 +2753,12 @@ async function renderAdmin() {
   } catch (e) {
     el.innerHTML = '<div class="estado-vazio">Acesso restrito ao administrador.</div>';
   }
+}
+async function escolherTemaApp(tema) {
+  await chamarComLoading('tema.definir', { tema });
+  aplicarTemaApp(tema);
+  toast('Aparência atualizada!', 'sucesso');
+  renderAdmin();
 }
 async function criarProfessorUI() {
   const nome = document.getElementById('input-prof-nome').value;

@@ -97,35 +97,47 @@ function renderResponderQuestao(q, idx, semResolucao) {
     ${(q.imagens || []).map(img => `<img src="${escapeHtml(img.data)}" style="max-width:100%;border-radius:8px;margin-bottom:10px;" alt="Imagem da questão">`).join('')}`;
   let corpo = '';
 
+  // Quando a atividade já foi respondida e a resolução foi liberada, o backend manda de volta
+  // a própria resposta do aluno (q.respostaAluno — ver buscarQuestoesParaResponder) pra essa
+  // tela mostrar o que ele realmente escreveu, não só o gabarito. Em modo "responder" normal
+  // q.respostaAluno é undefined e o comportamento é o de sempre (campos em branco/embaralhados).
+  const jaTemResposta = q.respostaAluno !== undefined;
+
   switch (q.tipo) {
     case 'multipla':
       corpo = Object.entries(q.alternativas || {}).map(([letra, texto]) => `
         <label class="alternativa">
-          <input type="radio" name="resp_${escapeHtml(q.id)}" value="${escapeHtml(letra)}">
+          <input type="radio" name="resp_${escapeHtml(q.id)}" value="${escapeHtml(letra)}" ${q.respostaAluno === letra ? 'checked' : ''}>
           <span><strong>${escapeHtml(letra)})</strong> ${formatarTextoQuestao(texto)}</span>
         </label>`).join('');
       break;
 
     case 'vf':
-      corpo = (q.alternativas || []).map(af => `
+      corpo = (q.alternativas || []).map(af => {
+        const valor = jaTemResposta ? (q.respostaAluno || {})[af.id] : undefined;
+        return `
         <div class="alternativa" style="cursor:default;">
           <span style="flex:1;">${formatarTextoQuestao(af.texto)}</span>
-          <label style="width:auto;display:flex;gap:4px;align-items:center;"><input type="radio" name="vf_${escapeHtml(q.id)}_${escapeHtml(af.id)}" value="true"> V</label>
-          <label style="width:auto;display:flex;gap:4px;align-items:center;"><input type="radio" name="vf_${escapeHtml(q.id)}_${escapeHtml(af.id)}" value="false"> F</label>
-        </div>`).join('');
+          <label style="width:auto;display:flex;gap:4px;align-items:center;"><input type="radio" name="vf_${escapeHtml(q.id)}_${escapeHtml(af.id)}" value="true" ${valor === true ? 'checked' : ''}> V</label>
+          <label style="width:auto;display:flex;gap:4px;align-items:center;"><input type="radio" name="vf_${escapeHtml(q.id)}_${escapeHtml(af.id)}" value="false" ${valor === false ? 'checked' : ''}> F</label>
+        </div>`;
+      }).join('');
       break;
 
     case 'relacione': {
       const colB = (q.alternativas && q.alternativas.colunaB) || [];
       corpo = `<div class="coluna-relacione"><div>
-        ${(q.alternativas.colunaA || []).map(itemA => `
+        ${(q.alternativas.colunaA || []).map(itemA => {
+          const selecionado = jaTemResposta ? (q.respostaAluno || {})[itemA.id] : '';
+          return `
           <div class="alternativa" style="cursor:default;">
             <span style="flex:1;">${formatarTextoQuestao(itemA.texto)}</span>
             <select data-relacione-de="${escapeHtml(itemA.id)}" style="width:auto;">
               <option value="">?</option>
-              ${colB.map(itemB => `<option value="${escapeHtml(itemB.id)}">${escapeHtml(itemB.texto).slice(0, 3)}...</option>`).join('')}
+              ${colB.map(itemB => `<option value="${escapeHtml(itemB.id)}" ${selecionado === itemB.id ? 'selected' : ''}>${escapeHtml(itemB.texto).slice(0, 3)}...</option>`).join('')}
             </select>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div><div>
         ${colB.map((itemB, i) => `<div class="alternativa" style="cursor:default;"><span><strong>${i + 1}.</strong> ${formatarTextoQuestao(itemB.texto)}</span></div>`).join('')}
       </div></div>`;
@@ -133,9 +145,15 @@ function renderResponderQuestao(q, idx, semResolucao) {
     }
 
     case 'classifique':
-    case 'ordenar':
+    case 'ordenar': {
+      // Em modo revisão, mostra os itens na ORDEM que o aluno entregou (não embaralha de novo —
+      // senão pareceria que a resposta dele foi outra).
+      const itensBase = q.alternativas || [];
+      const itensExibidos = jaTemResposta && Array.isArray(q.respostaAluno)
+        ? q.respostaAluno.map(id => itensBase.find(it => it.id === id)).filter(Boolean)
+        : _embaralhar(itensBase);
       corpo = `<div class="lista-ordenavel" data-questao-ordenar="${escapeHtml(q.id)}">
-        ${_embaralhar(q.alternativas || []).map((item, i) => `
+        ${itensExibidos.map((item, i) => `
           <div class="item-arrastavel" data-item-id="${escapeHtml(item.id)}" style="display:flex;justify-content:space-between;align-items:center;">
             <span>${formatarTextoQuestao(item.texto)}</span>
             <span>
@@ -145,16 +163,18 @@ function renderResponderQuestao(q, idx, semResolucao) {
           </div>`).join('')}
       </div>`;
       break;
+    }
 
     case 'lacunas': {
       let texto = escapeHtml(q.alternativas || '');
-      texto = texto.replace(/\{\{(\d+)\}\}/g, (m, n) => `<input type="text" style="width:140px;display:inline-block;" data-lacuna="${n}">`);
+      const respostasLacunas = jaTemResposta ? (q.respostaAluno || {}) : {};
+      texto = texto.replace(/\{\{(\d+)\}\}/g, (m, n) => `<input type="text" style="width:140px;display:inline-block;" data-lacuna="${n}" value="${escapeHtml(respostasLacunas[n] || '')}">`);
       corpo = `<div style="line-height:2.2;">${texto}</div>`;
       break;
     }
 
     case 'discursiva':
-      corpo = `<textarea data-discursiva="${escapeHtml(q.id)}" placeholder="Digite sua resposta..."></textarea>`;
+      corpo = `<textarea data-discursiva="${escapeHtml(q.id)}" placeholder="Digite sua resposta...">${jaTemResposta ? escapeHtml(q.respostaAluno || '') : ''}</textarea>`;
       break;
   }
 
@@ -199,9 +219,18 @@ function renderResolucaoQuestao(q) {
       respostaCorreta = '<strong>Respostas aceitas:</strong><br>' + Object.entries(q.gabarito || {})
         .map(([n, aceitas]) => `Lacuna ${escapeHtml(n)}: ${(aceitas || []).map(a => escapeHtml(a)).join(', ')}`).join('<br>');
       break;
-    case 'discursiva':
-      respostaCorreta = '<em>Questão discursiva — a nota e o comentário ficam disponíveis quando o professor revisar sua resposta.</em>';
+    case 'discursiva': {
+      // 06/09/2026 — antes essa mensagem aparecia sempre, mesmo depois do professor já ter
+      // revisado (a correção individual — correta/percentual/comentário — nunca era servida
+      // pro aluno; ver q.correcao em buscarQuestoesParaResponder).
+      if (q.correcao && q.correcao.percentual !== null && q.correcao.percentual !== undefined) {
+        respostaCorreta = `<strong>Sua nota nesta questão:</strong> ${Math.round(q.correcao.percentual * 100)}%` +
+          (q.correcao.comentario ? `<p style="margin-top:6px;"><strong>Comentário do professor:</strong> ${formatarTextoQuestao(q.correcao.comentario)}</p>` : '');
+      } else {
+        respostaCorreta = '<em>Questão discursiva — a nota e o comentário ficam disponíveis quando o professor revisar sua resposta.</em>';
+      }
       break;
+    }
   }
   const resolucaoTexto = q.resolucao ? `<p style="margin-top:8px;">${formatarTextoQuestao(q.resolucao)}</p>` : '';
   const imagens = (q.resolucaoImagens || []).map(img =>
@@ -325,7 +354,10 @@ function renderEditorPorTipo(tipo, dados) {
         <label>Respostas aceitas por lacuna (uma por linha, ex: "1: são paulo, sp")</label>
         <textarea id="edit-lacunas-gabarito">${escapeHtml(_gabaritoLacunasParaTexto(dados.gabarito))}</textarea>`;
     case 'discursiva':
-      return `<p style="color:var(--cinza-texto);font-size:0.9rem;">Questão discursiva: não tem gabarito fixo — a IA sugere uma correção e o professor sempre revisa antes de valer.</p>`;
+      return `<p style="color:var(--cinza-texto);font-size:0.9rem;">Questão discursiva: não tem gabarito fixo — a IA sugere uma correção e o professor sempre revisa antes de valer.</p>
+        <label>Resposta esperada (opcional)</label>
+        <p style="font-size:0.8rem;color:var(--cinza-texto);margin:0 0 6px;">Um gabarito de referência (não precisa ser a única resposta certa) — ajuda bastante a IA a sugerir uma correção melhor quando você pedir a sugestão.</p>
+        <textarea id="input-q-resposta-esperada" class="campo-matematico">${escapeHtml(dados.respostaEsperada || '')}</textarea>`;
     default: return '';
   }
 }

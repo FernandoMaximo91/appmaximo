@@ -13,6 +13,31 @@
   --sombra: 0 2px 10px rgba(15, 23, 42, 0.08);
 }
 
+/*
+ * Temas visuais (06/09/2026) — pedido do Fernando: um botão só pro Admin trocar a aparência
+ * do AppMaximo por outras cores. Cada tema só redefine as MESMAS variáveis acima — nenhum
+ * outro CSS do arquivo precisa saber que temas existem, porque tudo já usa var(--...).
+ * Aplicado via atributo data-tema no <body> (ver aplicarTemaApp em app.js), lido do backend
+ * (tema.obter) logo na carga do app, inclusive antes do login — pra já abrir com a cor certa.
+ */
+body[data-tema="oceano"] {
+  --azul: #0891b2; --azul-escuro: #0e4a5c; --verde: #059669; --vermelho: #e11d48;
+  --amarelo: #d97706; --cinza-fundo: #f0f9fb; --cinza-borda: #cfe8ee; --cinza-texto: #4a6a72;
+}
+body[data-tema="sunset"] {
+  --azul: #ea580c; --azul-escuro: #7c2d12; --verde: #65a30d; --vermelho: #dc2626;
+  --amarelo: #f59e0b; --cinza-fundo: #fff7ed; --cinza-borda: #fde3c8; --cinza-texto: #78350f;
+}
+body[data-tema="floresta"] {
+  --azul: #15803d; --azul-escuro: #14532d; --verde: #4d7c0f; --vermelho: #b91c1c;
+  --amarelo: #ca8a04; --cinza-fundo: #f2f8ef; --cinza-borda: #d7e8cd; --cinza-texto: #3f5a3a;
+}
+body[data-tema="roxo-noite"] {
+  --azul: #7c3aed; --azul-escuro: #2e1065; --verde: #16a34a; --vermelho: #e11d48;
+  --amarelo: #d97706; --cinza-fundo: #1e1b2e; --cinza-borda: #3a3352; --cinza-texto: #b8b2d4;
+  --texto: #ede9fe; --branco: #251f3d;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -201,6 +226,11 @@ details.card > button:last-child, details.card > *:not(summary):last-child { pad
 .pdf-export-area .card,
 .pdf-export-area p {
   max-width: 85%;
+}
+/* PDF exportado sempre em papel branco/texto escuro, mesmo com um tema escuro (ex: "roxo-noite")
+   ativo no app — impressão/leitura fora da tela não deve herdar a paleta visual do momento. */
+.pdf-export-area, .pdf-export-area .card {
+  background: #ffffff !important; color: #0f172a !important;
 }
 /* .alternativa é um flex container (display:flex) — o texto fica num <span> que, por ser item
    flex, tem min-width:auto por padrão e por isso pode se recusar a encolher/quebrar linha mesmo
