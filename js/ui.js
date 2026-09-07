@@ -21,7 +21,12 @@ function formatarTextoQuestao(textoCru) {
     .replace(/_(-?\d+)/g, '<sub>$1</sub>');
 }
 
-function mostrarLoading() { document.getElementById('loading').classList.remove('hidden'); }
+function mostrarLoading(mensagem) {
+  document.getElementById('loading').classList.remove('hidden');
+  const elTexto = document.getElementById('loading-texto');
+  if (mensagem) { elTexto.textContent = mensagem; elTexto.classList.remove('hidden'); }
+  else { elTexto.classList.add('hidden'); }
+}
 function esconderLoading() { document.getElementById('loading').classList.add('hidden'); }
 
 function toast(mensagem, tipo, duracaoMs) {
@@ -64,9 +69,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-/** Chamada de API com loading + tratamento de erro padronizado. Uso: const dados = await chamarComLoading(...). */
-async function chamarComLoading(action, dados) {
-  mostrarLoading();
+/** Chamada de API com loading + tratamento de erro padronizado. Uso: const dados = await chamarComLoading(...).
+ * `mensagemEspera` (opcional) mostra um texto embaixo do spinner — usado nas chamadas que dependem
+ * de IA (Gemini), que podem demorar bem mais que uma ação normal (07/09/2026: adicionado depois que
+ * o Fernando reportou "Não foi possível falar com o servidor" ao corrigir uma redação por IA — o
+ * mais provável é a correção ter demorado o bastante pra alguma rede/roteador no meio do caminho
+ * encerrar a conexão por inatividade aparente, não uma queda de internet de verdade; a mensagem
+ * ajuda a deixar claro que é esperado demorar, e não que travou). */
+async function chamarComLoading(action, dados, mensagemEspera) {
+  mostrarLoading(mensagemEspera);
   try {
     return await Api.chamar(action, dados);
   } catch (e) {

@@ -139,14 +139,39 @@ async function _painelAluno() {
   return painelAlunoCache;
 }
 
+/**
+ * Agrupa os cards de lista do aluno pelos respectivos blocos — mesmo padrão de agrupamento que
+ * o professor já via, agora também do lado do aluno (pedido do Fernando em 07/09/2026).
+ * `renderCard(item)` monta o HTML de cada card individual. Se nenhuma das listas do grupo
+ * pertence a algum bloco, não há motivo pra mostrar agrupamento — devolve a lista simples de
+ * sempre (evita um único "Sem bloco" redundante).
+ */
+function _htmlListasAgrupadasAluno(listas, blocos, renderCard) {
+  const nomesPorBlocoId = {};
+  (blocos || []).forEach(b => { nomesPorBlocoId[b.id] = b.nome; });
+  const grupos = {};
+  const semBloco = [];
+  listas.forEach(l => {
+    if (l.blocoId && nomesPorBlocoId[l.blocoId]) (grupos[l.blocoId] = grupos[l.blocoId] || []).push(l);
+    else semBloco.push(l);
+  });
+  const idsComItens = Object.keys(grupos);
+  if (idsComItens.length === 0) return listas.map(renderCard).join('');
+  const htmlGrupo = (nome, itens) => `
+    <details class="card" open>
+      <summary>📁 ${escapeHtml(nome)} <span class="badge badge-info">${itens.length}</span></summary>
+      <div style="margin-top:10px;">${itens.map(renderCard).join('')}</div>
+    </details>`;
+  return idsComItens.map(id => htmlGrupo(nomesPorBlocoId[id], grupos[id])).join('') +
+    (semBloco.length > 0 ? htmlGrupo('Sem bloco', semBloco) : '');
+}
+
 async function renderAlunoPendentes() {
   const el = document.getElementById('aluno-conteudo');
   try {
     const dados = await _painelAluno();
     const pendentes = dados.listas.filter(l => !l.respondida);
-    el.innerHTML = pendentes.length === 0
-      ? '<div class="estado-vazio">Nenhuma atividade pendente. 🎉</div>'
-      : pendentes.map(l => `
+    const cardPendente = l => `
         <div class="card lista-item">
           <div>
             <strong>${escapeHtml(l.titulo)}</strong><br>
@@ -157,7 +182,10 @@ async function renderAlunoPendentes() {
             : l.agendamentoStatus === 'encerrada'
               ? `<span class="badge badge-pendente">⏰ Prazo encerrado</span>`
               : `<button class="btn btn-primario btn-pequeno" onclick="abrirProva('${l.id}')">Responder</button>`}
-        </div>`).join('');
+        </div>`;
+    el.innerHTML = pendentes.length === 0
+      ? '<div class="estado-vazio">Nenhuma atividade pendente. 🎉</div>'
+      : _htmlListasAgrupadasAluno(pendentes, dados.blocos, cardPendente);
   } catch (e) { el.innerHTML = '<div class="estado-vazio">Não foi possível carregar.</div>'; }
 }
 
@@ -165,8 +193,7 @@ async function renderAlunoConcluidas() {
   const el = document.getElementById('aluno-conteudo');
   const dados = await _painelAluno();
   const feitas = dados.listas.filter(l => l.respondida);
-  el.innerHTML = feitas.length === 0 ? '<div class="estado-vazio">Nenhuma atividade concluída ainda.</div>' :
-    feitas.map(l => `
+  const cardFeita = l => `
       <div class="card lista-item">
         <div><strong>${escapeHtml(l.titulo)}</strong><br>
           <small>${l.resultado && l.resultado.acertos !== undefined ? l.resultado.acertos + ' acertos' : 'Aguardando correção'}</small>
@@ -176,7 +203,9 @@ async function renderAlunoConcluidas() {
           <span class="badge badge-feito">✓ Feita</span>
           ${l.resolucaoLiberada ? `<button class="btn btn-secundario btn-pequeno" onclick="abrirProva('${l.id}')">Ver resolução</button>` : ''}
         </span>
-      </div>`).join('');
+      </div>`;
+  el.innerHTML = feitas.length === 0 ? '<div class="estado-vazio">Nenhuma atividade concluída ainda.</div>' :
+    _htmlListasAgrupadasAluno(feitas, dados.blocos, cardFeita);
 }
 
 async function renderAlunoRedacoes() {
@@ -216,9 +245,16 @@ async function abrirCorrecaoRedacaoAluno(redacaoId) {
 async function renderAlunoAtividadeExtra() {
   const el = document.getElementById('aluno-conteudo');
   await carregarComponentes();
+  const dadosPainel = await _painelAluno();
   el.innerHTML = `<div class="card">
     <p>Gere uma atividade extra com questões feitas pela IA, sempre que quiser praticar. Escolha quantas questões, um conteúdo específico (opcional) e quais níveis de Bloom quer treinar (opcional). Se não escolher conteúdo e você tiver erros recentes, a atividade foca neles; senão, é uma revisão geral. Todas as atividades corrigidas ficam salvas na aba "Minhas Atividades".</p>
-    <label>Componente <small style="color:var(--cinza-texto);font-weight:400;">(obrigatório só se você escolher um conteúdo específico, ou se ainda não tiver nenhuma prova feita)</small></label>
+    <label>Basear-se numa lista ou bloco que você já viu <small style="color:var(--cinza-texto);font-weight:400;">(opcional — a IA usa o assunto/nível de lá pra gerar questões novas e parecidas)</small></label>
+    <select id="select-extra-base">
+      <option value="">Nenhum — usar a lógica automática abaixo</option>
+      ${dadosPainel.listas.length > 0 ? `<optgroup label="Minhas listas">${dadosPainel.listas.map(l => `<option value="lista:${l.id}">📝 ${escapeHtml(l.titulo)}</option>`).join('')}</optgroup>` : ''}
+      ${(dadosPainel.blocos || []).length > 0 ? `<optgroup label="Blocos da turma">${dadosPainel.blocos.map(b => `<option value="bloco:${b.id}">📁 ${escapeHtml(b.nome)}</option>`).join('')}</optgroup>` : ''}
+    </select>
+    <label>Componente <small style="color:var(--cinza-texto);font-weight:400;">(obrigatório só se você escolher um conteúdo específico, ou se ainda não tiver nenhuma prova feita, ou se a lista/bloco escolhido acima não tiver componente definido)</small></label>
     ${renderSelectComponente('select-extra-comp', '')}
     <label>Conteúdo específico (opcional)</label>
     <input id="input-extra-conteudo" placeholder="Ex: Frações — deixe em branco pra deixar a IA escolher">
@@ -239,9 +275,13 @@ async function gerarAtividadeExtra() {
   const conteudo = document.getElementById('input-extra-conteudo').value.trim();
   const quantidade = parseInt(document.getElementById('input-extra-qtd').value, 10) || 3;
   const niveisBloom = Array.from(document.querySelectorAll('.chk-extra-bloom:checked')).map(c => c.value);
+  const baseEscolhida = document.getElementById('select-extra-base').value;
+  const [tipoBase, idBase] = baseEscolhida ? baseEscolhida.split(':') : [null, null];
+  const listaBaseId = tipoBase === 'lista' ? idBase : null;
+  const blocoBaseId = tipoBase === 'bloco' ? idBase : null;
   if (conteudo && !componente) { toast('Escolha o componente curricular deste conteúdo.', 'erro'); return; }
   try {
-    const dados = await chamarComLoading('ia.gerarAtividadeComplementar', { componente, conteudo, quantidade, niveisBloom });
+    const dados = await chamarComLoading('ia.gerarAtividadeComplementar', { componente, conteudo, quantidade, niveisBloom, listaBaseId, blocoBaseId }, 'A IA está criando as questões — isso pode levar até 1 minuto...');
     window._atividadeExtraAtual = dados;
     const html = dados.questoes.map((q, i) => `
       <div class="questao-box">
@@ -255,10 +295,11 @@ async function gerarAtividadeExtra() {
     document.getElementById('atividade-extra-resultado').innerHTML = html +
       `<button class="btn btn-sucesso btn-full" onclick="corrigirAtividadeExtra()">Corrigir</button>`;
   } catch (e) {
-    if (e.code === 'ESCOLHA_COMPONENTE') {
+    if (e.code === 'ESCOLHA_COMPONENTE' && !listaBaseId && !blocoBaseId) {
       toast('Você ainda não tem histórico de provas — escolha um componente acima pra praticar.', 'erro');
     }
-    /* outros erros já mostrados via toast */
+    /* outros erros (inclusive ESCOLHA_COMPONENTE quando a lista/bloco de referência não tem
+       componente definido, e SEM_REFERENCIA) já aparecem via toast com a mensagem do servidor. */
   }
 }
 
@@ -268,7 +309,7 @@ async function corrigirAtividadeExtra() {
     const marcado = document.querySelector(`input[name="extra_${q.id}"]:checked`);
     if (marcado) respostas[q.id] = marcado.value;
   });
-  const resultado = await chamarComLoading('ia.corrigirAtividadeComplementar', { atividadeId: window._atividadeExtraAtual.atividadeId, respostas });
+  const resultado = await chamarComLoading('ia.corrigirAtividadeComplementar', { atividadeId: window._atividadeExtraAtual.atividadeId, respostas }, 'A IA está corrigindo suas respostas — isso pode levar até 1 minuto...');
   document.getElementById('atividade-extra-resultado').innerHTML = `
     <div class="alerta alerta-sucesso">Você acertou ${resultado.acertos} de ${resultado.total}.</div>
     ${resultado.resultado.map((r, i) => `
@@ -620,6 +661,10 @@ async function abrirTurma(escolaId, turmaId) {
   // (pedido do Fernando em 06/09/2026). Carrega os períodos aqui porque a seção de Notas
   // precisa deles montada já no primeiro innerHTML.
   const secaoNotas = acesso.total ? await _htmlSecaoNotasTurma() : '';
+  // Igual à seção de Notas acima: pré-carrega o catálogo de metodologias ANTES de montar o HTML,
+  // porque _htmlSecaoPlanejamentoTurma usa _nomeMetodologia (síncrono) pra mostrar o nome de cada
+  // metodologia nos cards já na primeira renderização.
+  const secaoPlanejamento = acesso.total ? await _htmlSecaoPlanejamentoTurma() : '';
   el.innerHTML = `
     <button class="btn btn-texto" onclick="abrirEscola('${escolaId}')">← Voltar</button>
     <h3>${escapeHtml(turmaAtualDetalhe.nome)}
@@ -659,7 +704,7 @@ async function abrirTurma(escolaId, turmaId) {
     </div>
     ${secaoNotas}
     ${_htmlSecaoDiagnosticoTurma()}
-    ${_htmlSecaoPlanejamentoTurma()}
+    ${secaoPlanejamento}
     <div class="card">
       <h4>Acesso de professores</h4>
       <p style="font-size:0.85rem;color:var(--cinza-texto);">Acesso total (mesmos acessos que você tem nesta turma):</p>
@@ -1179,13 +1224,20 @@ async function _filtrarQuestoesLista(pagina) {
   };
   const dados = await chamarComLoading('questoes.buscarPaginado', { filtros: window._listaFiltros, pagina: pagina || 1 });
   const container = document.getElementById('lista-checklist-questoes');
-  container.innerHTML = dados.questoes.map(q => `
+  // Corrigido em 07/09/2026 (auditoria): antes disso a questão inteira ia serializada dentro do
+  // atributo onclick via JSON.stringify — se algum campo de texto contivesse a sequência "&quot;"
+  // (entidade HTML), o navegador decodifica isso ANTES de rodar o onclick como JS, quebrando a
+  // string e permitindo injetar código (XSS) no navegador de quem clicasse em "Ver". Agora as
+  // questões ficam num cache em window e o botão só referencia o índice — nada de HTML do usuário
+  // entra no atributo.
+  window._questoesListaCache = dados.questoes;
+  container.innerHTML = dados.questoes.map((q, i) => `
     <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">
       <label class="alternativa" style="flex:1;margin-bottom:0;">
         <input type="checkbox" class="chk-questao-lista" value="${q.id}" ${window._listaQuestoesSelecionadas.has(q.id) ? 'checked' : ''} onchange="_alternarSelecaoQuestaoLista('${q.id}', this.checked)">
         <span>[${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}] ${escapeHtml(q.comp)} — ${formatarTextoQuestao(q.text).slice(0, 80)}...</span>
       </label>
-      <button type="button" class="btn btn-pequeno btn-secundario" onclick='abrirVisualizacaoQuestao(${JSON.stringify(q).replace(/'/g, "&#39;")})'>👁 Ver</button>
+      <button type="button" class="btn btn-pequeno btn-secundario" onclick="abrirVisualizacaoQuestao(window._questoesListaCache[${i}])">👁 Ver</button>
     </div>`).join('') +
     `<div class="linha-botoes" style="justify-content:center;">
       ${pagina > 1 ? `<button class="btn btn-secundario btn-pequeno" onclick="_filtrarQuestoesLista(${pagina - 1})">← Anterior</button>` : ''}
@@ -1405,7 +1457,7 @@ async function confirmarGerarPorIA() {
   const niveisBloom = Array.from(document.querySelectorAll('.chk-ia-bloom:checked')).map(c => c.value);
   const unidadeTematica = document.getElementById('input-ia-unidade').value.trim();
   const estilo = document.getElementById('input-ia-estilo').value.trim();
-  const resultado = await chamarComLoading('ia.gerarQuestoesPorIA', { comp, cont, ano, quantidade, dificuldade, niveisBloom, unidadeTematica, estilo });
+  const resultado = await chamarComLoading('ia.gerarQuestoesPorIA', { comp, cont, ano, quantidade, dificuldade, niveisBloom, unidadeTematica, estilo }, 'A IA está criando as questões — isso pode levar até 1 minuto...');
   window._questoesIAPreview = resultado.questoes.map(q => ({ ...q, incluir: true }));
   document.getElementById('preview-gerar-ia').innerHTML = `
     <p><strong>${resultado.total} questões geradas.</strong> Revise antes de salvar:</p>
@@ -1644,7 +1696,7 @@ function _htmlNotaFinalRedacao(redacao, r) {
  */
 async function pedirCorrecaoIA(redacaoId, alunoId) {
   const redacao = turmaAtualDetalhe.redacoes.find(r => r.id === redacaoId);
-  const sugestao = await chamarComLoading('redacao.corrigirIA', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, redacaoId, alunoId });
+  const sugestao = await chamarComLoading('redacao.corrigirIA', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, redacaoId, alunoId }, 'A IA está lendo e corrigindo a redação — isso pode levar até 1 minuto...');
   document.getElementById('correcao-area-' + alunoId).innerHTML = _htmlRevisaoRedacao(redacao, alunoId, sugestao, redacaoId);
 }
 
@@ -1693,7 +1745,7 @@ async function abrirCorrecaoDiscursivas(listaId, tituloLista) {
 
 async function pedirSugestaoDiscursivaIA(i) {
   const p = window._discursivasPendentesAtual[i];
-  const sugestao = await chamarComLoading('questoes.sugerirCorrecaoDiscursivaIA', { enunciado: p.enunciado, resposta: p.resposta, respostaEsperada: p.respostaEsperada || '' });
+  const sugestao = await chamarComLoading('questoes.sugerirCorrecaoDiscursivaIA', { enunciado: p.enunciado, resposta: p.resposta, respostaEsperada: p.respostaEsperada || '' }, 'A IA está avaliando a resposta — isso pode levar até 1 minuto...');
   document.getElementById('discursiva-sugestao-' + i).innerHTML = `<div class="alerta alerta-info">Sugestão da IA: nota ${(sugestao.nota * 10).toFixed(1)} — ${escapeHtml(sugestao.comentario)}</div>`;
   document.getElementById('discursiva-nota-' + i).value = (sugestao.nota * 10).toFixed(1);
   document.getElementById('discursiva-comentario-' + i).value = sugestao.comentario;
@@ -1858,7 +1910,7 @@ async function renderBancoQuestoes(pagina) {
         <button class="btn btn-texto btn-pequeno" onclick="abrirAbaProfessor('modelos')" style="padding:2px 6px;">Ver na Biblioteca →</button>
       </div>` : ''}
       <p style="font-size:0.85rem;color:var(--cinza-texto);"><strong>${dados.total}</strong> questão${dados.total === 1 ? '' : 'ões'} encontrada${dados.total === 1 ? '' : 's'}.</p>
-    ${dados.questoes.map(q => `
+    ${(window._bancoQuestoesCache = dados.questoes).map((q, i) => `
       <div class="card">
         <span class="badge badge-info">${escapeHtml(LABELS_TIPO[q.tipo] || q.tipo)}</span>
         ${q.bloomLevel ? `<span class="badge badge-info">${escapeHtml(LABELS_BLOOM[q.bloomLevel] || q.bloomLevel)}</span>` : ''}
@@ -1868,8 +1920,8 @@ async function renderBancoQuestoes(pagina) {
         <p>${formatarTextoQuestao(q.text)}</p>
         <small>${escapeHtml(q.comp)} · ${escapeHtml(q.cont || '')}</small>
         <div class="linha-botoes">
-          <button class="btn btn-pequeno btn-secundario" onclick='abrirVisualizacaoQuestao(${JSON.stringify(q).replace(/'/g, "&#39;")})'>👁 Ver</button>
-          <button class="btn btn-pequeno btn-secundario" onclick='modalEditarQuestao(${JSON.stringify(q).replace(/'/g, "&#39;")})'>Editar</button>
+          <button class="btn btn-pequeno btn-secundario" onclick="abrirVisualizacaoQuestao(window._bancoQuestoesCache[${i}])">👁 Ver</button>
+          <button class="btn btn-pequeno btn-secundario" onclick="modalEditarQuestao(window._bancoQuestoesCache[${i}])">Editar</button>
           <button class="btn btn-pequeno btn-perigo" onclick="excluirQuestao('${q.id}')">Excluir</button>
         </div>
       </div>`).join('')}
@@ -2047,7 +2099,7 @@ async function pedirSugestaoClassificacao() {
   const conteudo = document.getElementById('input-q-cont').value;
   const enunciado = document.getElementById('input-q-text').value;
   if (!componente || !enunciado) { toast('Preencha componente e enunciado primeiro.', 'erro'); return; }
-  const sugestao = await chamarComLoading('ia.sugerirClassificacao', { componente, conteudo, enunciado });
+  const sugestao = await chamarComLoading('ia.sugerirClassificacao', { componente, conteudo, enunciado }, 'A IA está analisando a questão...');
   document.getElementById('input-q-bloom').value = sugestao.bloomLevel;
   if (sugestao.dimensaoConhecimento) document.getElementById('input-q-dimensao').value = sugestao.dimensaoConhecimento;
   window._preRequisitosAtuais = sugestao.preRequisitosSugeridos || [];
@@ -2346,7 +2398,7 @@ async function confirmarImportarVestibular() {
     base64Prova: prova.base64, mimeProva: prova.mime,
     base64Gabarito: gabarito ? gabarito.base64 : null, mimeGabarito: gabarito ? gabarito.mime : null,
     componentePadrao
-  });
+  }, 'A IA está lendo o arquivo e extraindo as questões — isso pode levar alguns minutos em provas grandes...');
   window._questoesVestibularPreview = resultado.questoes.map(q => ({ ...q, tipo: 'multipla', incluir: true }));
   document.getElementById('preview-import-vestibular').innerHTML = `
     <p><strong>${resultado.total} questões encontradas.</strong> Revise antes de confirmar:</p>
@@ -2386,19 +2438,63 @@ function _agruparListasPorBloco() {
 }
 
 /** Cada bloco (e o "Bloco Geral") vira um menu recolhível (<details>, mesmo padrão já usado em
- * "Alunos") com as listas daquele bloco dentro, no mesmo card de lista (_cardLista) de sempre. */
+ * "Alunos") com as listas daquele bloco dentro, no mesmo card de lista (_cardLista) de sempre.
+ * Blocos de verdade (não o "Bloco Geral", que é só um agrupamento visual do que sobra) ganham um
+ * botão "✏️ Editar bloco" — antes não existia NENHUMA forma de editar um bloco depois de criado,
+ * então uma lista nova feita depois do bloco nunca podia entrar nele (bug reportado pelo Fernando
+ * em 07/09/2026). O backend (blocos.editar) já suportava isso, só faltava a tela. */
 function _htmlGrupoListas() {
   const { grupos, listasSemBloco } = _agruparListasPorBloco();
-  const htmlBloco = (nome, infoExtra, listas, abertoPorPadrao) => `
+  const htmlBloco = (nome, infoExtra, listas, abertoPorPadrao, blocoId) => `
     <details class="card" ${abertoPorPadrao ? 'open' : ''}>
       <summary>📁 ${escapeHtml(nome)}${infoExtra ? ` <small style="color:var(--cinza-texto);font-weight:400;">— ${infoExtra}</small>` : ''} <span class="badge badge-info">${listas.length}</span></summary>
+      ${blocoId ? `<button class="btn btn-secundario btn-pequeno" onclick="modalEditarBloco('${blocoId}')" style="margin-top:8px;">✏️ Editar bloco</button>` : ''}
       <div class="grid-cards" style="margin-top:10px;">
         ${listas.length === 0 ? '<div class="estado-vazio">Nenhuma lista neste bloco ainda.</div>' : listas.map(l => _cardLista(l)).join('')}
       </div>
     </details>`;
-  const blocosHtml = grupos.map(g => htmlBloco(g.nome, `${g.notaTotal} pts, ${g.modo === 'participacao' ? 'participação' : 'acerto'}`, g.listas, false)).join('');
+  const blocosHtml = grupos.map(g => htmlBloco(g.nome, `${g.notaTotal} pts, ${g.modo === 'participacao' ? 'participação' : 'acerto'}`, g.listas, false, g.id)).join('');
   const geralHtml = htmlBloco('Bloco Geral', 'listas sem bloco definido', listasSemBloco, grupos.length === 0);
   return blocosHtml + geralHtml;
+}
+
+/** Edita um bloco existente — sobretudo pra incluir listas/redações criadas DEPOIS do bloco, que
+ * antes ficavam permanentemente de fora. Mostra todas as listas/redações da turma como checkbox,
+ * pré-marcando as que já fazem parte deste bloco. */
+function modalEditarBloco(blocoId) {
+  const bloco = (turmaAtualDetalhe.blocos || []).find(b => b.id === blocoId);
+  if (!bloco) { toast('Bloco não encontrado.', 'erro'); return; }
+  const itensAtuais = new Set((bloco.itens || []).map(i => `${i.tipo}:${i.refId}`));
+  abrirModal(`<h3>Editar bloco</h3>
+    <label>Nome</label><input id="input-editar-bloco-nome" value="${escapeHtml(bloco.nome)}">
+    <label>Nota total</label><input id="input-editar-bloco-nota" type="number" step="0.1" value="${bloco.notaTotal}">
+    <label>Modo de correção</label>
+    <select id="input-editar-bloco-modo">
+      <option value="participacao" ${bloco.modo === 'participacao' ? 'selected' : ''}>Por participação</option>
+      <option value="acerto" ${bloco.modo === 'acerto' ? 'selected' : ''}>Por acerto</option>
+    </select>
+    <label>Itens do bloco <small style="color:var(--cinza-texto);font-weight:400;">(marque aqui também as listas/redações criadas depois deste bloco)</small></label>
+    <div>
+      ${turmaAtualDetalhe.listas.map(l => `<label class="alternativa"><input type="checkbox" class="chk-item-editar-bloco" value="lista:${l.id}" ${itensAtuais.has('lista:' + l.id) ? 'checked' : ''}><span>📝 ${escapeHtml(l.titulo)}</span></label>`).join('')}
+      ${turmaAtualDetalhe.redacoes.map(r => `<label class="alternativa"><input type="checkbox" class="chk-item-editar-bloco" value="redacao:${r.id}" ${itensAtuais.has('redacao:' + r.id) ? 'checked' : ''}><span>✍️ ${escapeHtml(r.titulo)}</span></label>`).join('')}
+    </div>
+    <button class="btn btn-primario btn-full" onclick="salvarEdicaoBloco('${blocoId}')">Salvar</button>
+    <button class="btn btn-perigo btn-full" style="margin-top:6px;" onclick="excluirBlocoUI('${blocoId}', '${escapeHtml(bloco.nome).replace(/'/g, "\\'")}')">🗑️ Excluir bloco</button>`);
+}
+async function salvarEdicaoBloco(blocoId) {
+  const nome = document.getElementById('input-editar-bloco-nome').value;
+  const notaTotal = document.getElementById('input-editar-bloco-nota').value;
+  const modo = document.getElementById('input-editar-bloco-modo').value;
+  const itens = Array.from(document.querySelectorAll('.chk-item-editar-bloco:checked')).map(c => {
+    const [tipo, refId] = c.value.split(':'); return { tipo, refId };
+  });
+  await chamarComLoading('blocos.editar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, blocoId, nome, notaTotal, modo, itens });
+  fecharModal(); toast('Bloco atualizado.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+async function excluirBlocoUI(blocoId, nome) {
+  if (!confirm(`Excluir o bloco "${nome}"? As listas/redações não são excluídas, só deixam de fazer parte dele.`)) return;
+  await chamarComLoading('blocos.deletar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, blocoId });
+  fecharModal(); toast('Bloco excluído.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
 }
 
 // ======================================================================
@@ -2515,22 +2611,27 @@ async function verDiagnosticoDaTurmaAtual() {
 // PROFESSOR — PLANEJAMENTO DE AULA (dentro da turma, ver abrirTurma) — novo em 06/09/2026
 // ======================================================================
 
-function _htmlSecaoPlanejamentoTurma() {
+async function _htmlSecaoPlanejamentoTurma() {
+  await carregarMetodologiasPlanejamento(); // aquece o cache pra _nomeMetodologia (síncrono) abaixo
   const itens = turmaAtualDetalhe.planejamentos || [];
   return `<details class="card">
     <summary>📋 Planejamento de aula <span class="badge badge-info">${itens.length}</span></summary>
     <div style="margin-top:10px;">
       ${itens.length === 0 ? '<div class="estado-vazio">Nenhum planejamento cadastrado ainda.</div>' : itens.map(p => `
         <div class="lista-item">
-          <span><strong>${escapeHtml(p.titulo)}</strong><br>
-            <small>${p.data ? _formatarDataSimples(p.data) + ' · ' : ''}${escapeHtml(p.componente || 'sem componente definido')}</small>
+          <span><strong>${escapeHtml(p.titulo)}</strong>
+            <span class="badge ${p.tipo === 'geral' ? 'badge-info' : 'badge-feito'}" style="margin-left:6px;">${p.tipo === 'geral' ? 'Geral' : 'Específico'}</span><br>
+            <small>${p.data ? _formatarDataSimples(p.data) + ' · ' : ''}${escapeHtml(p.componente || 'sem componente definido')}${p.metodologia ? ' · ' + escapeHtml(_nomeMetodologia(p.metodologia)) : ''}</small>
           </span>
           <span>
             <button class="btn btn-pequeno btn-secundario" onclick="abrirPlanejamento('${p.id}')">Ver/Editar</button>
             <button class="btn btn-pequeno btn-perigo" onclick="excluirPlanejamento('${p.id}', '${escapeHtml(p.titulo).replace(/'/g, "\\'")}')">Excluir</button>
           </span>
         </div>`).join('')}
-      <button class="btn btn-texto btn-pequeno" onclick="modalNovoPlanejamento()">+ Novo planejamento</button>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-texto btn-pequeno" onclick="modalNovoPlanejamento()">+ Novo planejamento</button>
+        <button class="btn btn-texto btn-pequeno" onclick="modalImportarPlanejamentosJSON()">📥 Importar via JSON</button>
+      </div>
     </div>
   </details>`;
 }
@@ -2541,31 +2642,104 @@ function _formatarDataSimples(iso) {
   return (ano && mes && dia) ? `${dia}/${mes}/${ano}` : iso;
 }
 
-function _htmlFormPlanejamento(p) {
-  return `<label>Título / conteúdo da aula</label><input id="input-plan-titulo" value="${escapeHtml((p && p.titulo) || '')}" placeholder="Ex: Equações do 1º grau">
+// ---------- Catálogo de metodologias (carregado do backend — Planejamentos.gs é a fonte da
+// verdade, ver METODOLOGIAS_PLANEJAMENTO lá) ----------
+let metodologiasPlanejamentoCache = null;
+async function carregarMetodologiasPlanejamento() {
+  if (!metodologiasPlanejamentoCache) {
+    const dados = await Api.chamar('planejamentos.listarMetodologias', {});
+    metodologiasPlanejamentoCache = dados.metodologias;
+  }
+  return metodologiasPlanejamentoCache;
+}
+function _nomeMetodologia(chave) {
+  const m = (metodologiasPlanejamentoCache || []).find(x => x.chave === chave);
+  return m ? m.nome : chave;
+}
+
+function _htmlFormPlanejamento(p, metodologias) {
+  const tipo = (p && p.tipo) || 'especifico';
+  const metodologiaAtual = (p && p.metodologia) || '';
+  const etapas = (p && p.etapas) || [];
+  const optionsMetodologia = t => `<option value="">Livre (sem metodologia específica)</option>` +
+    metodologias.filter(m => m.tipo === t).map(m => `<option value="${m.chave}" ${m.chave === metodologiaAtual ? 'selected' : ''}>${escapeHtml(m.nome)}</option>`).join('');
+  return `
+    <label>Título</label><input id="input-plan-titulo" value="${escapeHtml((p && p.titulo) || '')}" placeholder="Ex: Equações do 1º grau (específico) ou '2º Trimestre — Álgebra' (geral)">
+    <label>Tipo de planejamento</label>
+    <select id="input-plan-tipo" onchange="_atualizarSelectMetodologia()">
+      <option value="especifico" ${tipo === 'especifico' ? 'selected' : ''}>Específico (uma aula)</option>
+      <option value="geral" ${tipo === 'geral' ? 'selected' : ''}>Geral (várias aulas / trimestre)</option>
+    </select>
+    <label>Metodologia <small style="color:var(--cinza-texto);font-weight:400;">(opcional — define as etapas sugeridas abaixo)</small></label>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <select id="input-plan-metodologia" style="flex:1;" data-metodologia-atual="${escapeHtml(metodologiaAtual)}">${optionsMetodologia(tipo)}</select>
+      <button type="button" class="btn btn-secundario btn-pequeno" onclick="_carregarEtapasPadraoPlanejamento()">🔄 Etapas padrão</button>
+    </div>
     <label>Data (opcional)</label><input id="input-plan-data" type="date" value="${escapeHtml((p && p.data) || '')}">
     <label>Componente curricular (opcional)</label>${renderSelectComponente('input-plan-comp', (p && p.componente) || '')}
-    <label>Objetivos de aprendizagem</label><textarea id="input-plan-objetivos" placeholder="O que o aluno deve ser capaz de fazer ao final da aula">${escapeHtml((p && p.objetivos) || '')}</textarea>
-    <label>Conteúdo / desenvolvimento da aula</label><textarea id="input-plan-conteudo" placeholder="Passo a passo do que será trabalhado">${escapeHtml((p && p.conteudo) || '')}</textarea>
-    <label>Metodologia</label><textarea id="input-plan-metodologia" placeholder="Como a aula será conduzida (exposição, atividade em grupo, etc.)">${escapeHtml((p && p.metodologia) || '')}</textarea>
+    <label>Objetivos de aprendizagem</label><textarea id="input-plan-objetivos" placeholder="O que o aluno deve ser capaz de fazer ao final">${escapeHtml((p && p.objetivos) || '')}</textarea>
+    <label>Etapas do planejamento</label>
+    <div id="plan-etapas-container">${etapas.map(_htmlLinhaEtapaPlanejamento).join('')}</div>
+    <button type="button" class="btn btn-texto btn-pequeno" onclick="_adicionarEtapaPlanejamento()">+ Adicionar etapa</button>
     <label>Recursos didáticos</label><input id="input-plan-recursos" value="${escapeHtml((p && p.recursos) || '')}" placeholder="Quadro, slides, lista impressa...">
     <label>Avaliação</label><textarea id="input-plan-avaliacao" placeholder="Como será verificado se o objetivo foi atingido">${escapeHtml((p && p.avaliacao) || '')}</textarea>
     <label>Observações</label><textarea id="input-plan-observacoes">${escapeHtml((p && p.observacoes) || '')}</textarea>`;
 }
+function _htmlLinhaEtapaPlanejamento(e) {
+  return `<div class="card" style="background:var(--cinza-fundo);margin-bottom:8px;padding:10px;">
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+      <input class="plan-etapa-nome" value="${escapeHtml((e && e.nome) || '')}" placeholder="Nome da etapa" style="flex:1;margin:0;">
+      <button type="button" class="btn btn-perigo btn-pequeno" onclick="this.closest('div.card').remove()">🗑️</button>
+    </div>
+    <textarea class="plan-etapa-conteudo" placeholder="O que acontece nesta etapa" style="margin:0;">${escapeHtml((e && e.conteudo) || '')}</textarea>
+  </div>`;
+}
+function _adicionarEtapaPlanejamento() {
+  document.getElementById('plan-etapas-container').insertAdjacentHTML('beforeend', _htmlLinhaEtapaPlanejamento(null));
+}
+async function _atualizarSelectMetodologia() {
+  const tipo = document.getElementById('input-plan-tipo').value;
+  const metodologias = await carregarMetodologiasPlanejamento();
+  const sel = document.getElementById('input-plan-metodologia');
+  const atual = sel.dataset.metodologiaAtual;
+  sel.innerHTML = `<option value="">Livre (sem metodologia específica)</option>` +
+    metodologias.filter(m => m.tipo === tipo).map(m => `<option value="${m.chave}" ${m.chave === atual ? 'selected' : ''}>${escapeHtml(m.nome)}</option>`).join('');
+}
+/** Preenche o bloco de etapas com as etapas padrão da metodologia escolhida (o professor edita o
+ * conteúdo depois). Pede confirmação se já houver etapas com conteúdo, pra não apagar por engano. */
+async function _carregarEtapasPadraoPlanejamento() {
+  const chave = document.getElementById('input-plan-metodologia').value;
+  const container = document.getElementById('plan-etapas-container');
+  const temConteudo = Array.from(container.querySelectorAll('.plan-etapa-conteudo')).some(t => t.value.trim());
+  if (container.children.length > 0 && temConteudo && !confirm('Isso substitui as etapas atuais pelas etapas padrão dessa metodologia. Continuar?')) return;
+  const metodologias = await carregarMetodologiasPlanejamento();
+  const m = metodologias.find(x => x.chave === chave);
+  const etapasPadrao = m ? m.etapasPadrao.map(nome => ({ nome, conteudo: '' })) : [];
+  if (!m) { toast('Escolha uma metodologia primeiro (ou deixe "Livre" e adicione etapas manualmente).', 'erro'); return; }
+  container.innerHTML = etapasPadrao.map(_htmlLinhaEtapaPlanejamento).join('');
+}
+function _lerEtapasPlanejamento() {
+  return Array.from(document.querySelectorAll('#plan-etapas-container > div')).map(div => ({
+    nome: div.querySelector('.plan-etapa-nome').value,
+    conteudo: div.querySelector('.plan-etapa-conteudo').value
+  })).filter(e => e.nome && e.nome.trim());
+}
 
 async function modalNovoPlanejamento() {
   await carregarComponentes();
-  abrirModal(`<h3>Novo planejamento de aula</h3>${_htmlFormPlanejamento(null)}
+  const metodologias = await carregarMetodologiasPlanejamento();
+  abrirModal(`<h3>Novo planejamento de aula</h3>${_htmlFormPlanejamento(null, metodologias)}
     <button class="btn btn-primario btn-full" onclick="salvarNovoPlanejamento()">Criar planejamento</button>`);
 }
 function _lerFormPlanejamento() {
   return {
     titulo: document.getElementById('input-plan-titulo').value,
+    tipo: document.getElementById('input-plan-tipo').value,
+    metodologia: document.getElementById('input-plan-metodologia').value,
     data: document.getElementById('input-plan-data').value,
     componente: document.getElementById('input-plan-comp').value,
     objetivos: document.getElementById('input-plan-objetivos').value,
-    conteudo: document.getElementById('input-plan-conteudo').value,
-    metodologia: document.getElementById('input-plan-metodologia').value,
+    etapas: _lerEtapasPlanejamento(),
     recursos: document.getElementById('input-plan-recursos').value,
     avaliacao: document.getElementById('input-plan-avaliacao').value,
     observacoes: document.getElementById('input-plan-observacoes').value
@@ -2581,7 +2755,8 @@ async function abrirPlanejamento(planejamentoId) {
   const p = (turmaAtualDetalhe.planejamentos || []).find(x => x.id === planejamentoId);
   if (!p) return;
   await carregarComponentes();
-  abrirModal(`<h3>Editar planejamento</h3>${_htmlFormPlanejamento(p)}
+  const metodologias = await carregarMetodologiasPlanejamento();
+  abrirModal(`<h3>Editar planejamento</h3>${_htmlFormPlanejamento(p, metodologias)}
     <button class="btn btn-primario btn-full" onclick="salvarEdicaoPlanejamento('${planejamentoId}')">Salvar alterações</button>`);
 }
 async function salvarEdicaoPlanejamento(planejamentoId) {
@@ -2594,6 +2769,67 @@ async function excluirPlanejamento(planejamentoId, titulo) {
   if (!confirm(`Excluir o planejamento "${titulo}"?`)) return;
   await chamarComLoading('planejamentos.deletar', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, planejamentoId });
   toast('Planejamento excluído.', 'sucesso'); abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
+}
+
+// ---------- Importar planejamentos em lote via JSON (mesmo padrão de alunos/questões) ----------
+
+const MODELO_JSON_PLANEJAMENTOS = [
+  {
+    titulo: 'Equações do 1º grau — Sequência Fedathi',
+    tipo: 'especifico', metodologia: 'fedathi',
+    data: '', componente: 'Matemática',
+    objetivos: 'Resolver equações do 1º grau isolando a incógnita.',
+    etapas: [
+      { nome: 'Tomada de Posição (apresentação do problema)', conteudo: 'Propor uma situação-problema que recaia numa equação, sem explicar o procedimento antes.' },
+      { nome: 'Maturação (investigação pelos alunos)', conteudo: 'Alunos tentam resolver do jeito deles, em duplas.' },
+      { nome: 'Solução (apresentação e debate dos modelos dos alunos)', conteudo: 'Alguns grupos mostram como pensaram na lousa.' },
+      { nome: 'Prova (formalização do conceito pelo professor)', conteudo: 'Formalizar o procedimento algébrico a partir do que apareceu.' }
+    ],
+    recursos: 'Quadro, lista impressa',
+    avaliacao: 'Lista de exercícios de fixação ao final.',
+    observacoes: ''
+  },
+  {
+    titulo: '2º Trimestre — Álgebra (Sequência Didática BNCC)',
+    tipo: 'geral', metodologia: 'sequencia_didatica_bncc',
+    data: '', componente: 'Matemática',
+    objetivos: 'Consolidar equações e inequações do 1º grau ao longo do trimestre.',
+    etapas: [
+      { nome: 'Tema/unidade temática e habilidades da BNCC', conteudo: 'EF07MA... (preencher com as habilidades trabalhadas)' },
+      { nome: 'Objetivos gerais', conteudo: '' },
+      { nome: 'Levantamento de conhecimentos prévios', conteudo: '' },
+      { nome: 'Sequência de atividades/aulas', conteudo: 'Ligar aqui os planejamentos específicos de cada aula do trimestre.' },
+      { nome: 'Avaliação formativa contínua', conteudo: '' },
+      { nome: 'Avaliação final', conteudo: '' }
+    ],
+    recursos: '', avaliacao: '', observacoes: ''
+  }
+];
+
+function modalImportarPlanejamentosJSON() {
+  abrirModal(`<h3>Importar planejamentos via JSON</h3>
+    <p style="font-size:0.85rem;color:var(--cinza-texto);">Cole um array JSON de planejamentos (ex: a saída de uma IA de planejamento). Cada item precisa pelo menos de um "titulo"; "tipo" é "especifico" ou "geral"; "metodologia" é opcional (uma das chaves do catálogo, ou vazio pra livre).</p>
+    <button type="button" class="btn btn-secundario btn-full" onclick="copiarModeloPlanejamentosJSON()">📋 Copiar modelo JSON</button>
+    <textarea id="input-planejamentos-json" style="min-height:220px;"></textarea>
+    <button class="btn btn-primario btn-full" onclick="confirmarImportarPlanejamentosJSON()">Importar</button>`);
+}
+async function copiarModeloPlanejamentosJSON() {
+  const texto = JSON.stringify(MODELO_JSON_PLANEJAMENTOS, null, 2);
+  try {
+    await navigator.clipboard.writeText(texto);
+    toast('Modelo copiado! Cole onde quiser (ou aqui embaixo pra editar).', 'sucesso');
+  } catch (e) {
+    document.getElementById('input-planejamentos-json').value = texto;
+    toast('Não consegui copiar automaticamente — coloquei o modelo no campo abaixo pra você editar.', 'sucesso');
+  }
+}
+async function confirmarImportarPlanejamentosJSON() {
+  let arr;
+  try { arr = JSON.parse(document.getElementById('input-planejamentos-json').value); } catch (e) { toast('JSON inválido.', 'erro'); return; }
+  const resultado = await chamarComLoading('planejamentos.importarJSON', { escolaId: turmaAtualDetalhe._escolaId, turmaId: turmaAtualDetalhe.id, planejamentos: arr });
+  fecharModal();
+  toast(`${resultado.importados} planejamento(s) importado(s)${resultado.erros ? ', ' + resultado.erros + ' com erro' : ''}.`, 'sucesso');
+  abrirTurma(turmaAtualDetalhe._escolaId, turmaAtualDetalhe.id);
 }
 
 /** Badge da 3ª hipótese de diagnóstico (comparação de desempenho entre Dimensões do Conhecimento do mesmo conteúdo). */

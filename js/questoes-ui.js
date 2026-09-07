@@ -157,8 +157,8 @@ function renderResponderQuestao(q, idx, semResolucao) {
           <div class="item-arrastavel" data-item-id="${escapeHtml(item.id)}" style="display:flex;justify-content:space-between;align-items:center;">
             <span>${formatarTextoQuestao(item.texto)}</span>
             <span>
-              <button type="button" class="btn btn-pequeno btn-secundario" onclick="moverItemOrdenavel('${escapeHtml(q.id)}', ${i}, -1)">▲</button>
-              <button type="button" class="btn btn-pequeno btn-secundario" onclick="moverItemOrdenavel('${escapeHtml(q.id)}', ${i}, 1)">▼</button>
+              <button type="button" class="btn btn-pequeno btn-secundario" onclick="moverItemOrdenavel(this, ${i}, -1)">▲</button>
+              <button type="button" class="btn btn-pequeno btn-secundario" onclick="moverItemOrdenavel(this, ${i}, 1)">▼</button>
             </span>
           </div>`).join('')}
       </div>`;
@@ -255,8 +255,14 @@ function _embaralhar(arr) {
   return copia;
 }
 
-function moverItemOrdenavel(qId, indice, direcao) {
-  const container = document.querySelector(`[data-questao-ordenar="${qId}"]`);
+// Corrigido em 07/09/2026 (auditoria): antes recebia o id da questão como string interpolada no
+// onclick (`onclick="moverItemOrdenavel('${escapeHtml(q.id)}', ...)"`); mesmo escapado, isso é
+// inseguro em princípio (o navegador decodifica entidades HTML do atributo ANTES de rodar o
+// onclick como JS, então um escapeHtml sozinho não impede quebra de string ali). Agora recebe o
+// próprio elemento clicado (`this`) e sobe até o container pelo DOM — nenhum texto do usuário
+// entra no atributo onclick.
+function moverItemOrdenavel(botao, indice, direcao) {
+  const container = botao.closest('[data-questao-ordenar]');
   const itens = Array.from(container.children);
   const novoIndice = indice + direcao;
   if (novoIndice < 0 || novoIndice >= itens.length) return;
@@ -363,14 +369,17 @@ function renderEditorPorTipo(tipo, dados) {
 }
 
 function _linhaAfirmacaoVF(af, valorGabarito) {
-  return `<div class="linha-botoes" data-af-id="${af.id}" style="align-items:center;">
+  // escapeHtml nos ids em 07/09/2026 (auditoria): esses ids podem vir de uma questão importada
+  // via JSON colado (não só de gerarId(), que é sempre seguro) — sem escape, um id malicioso
+  // quebraria o atributo HTML e injetaria JS na tela de edição do professor.
+  return `<div class="linha-botoes" data-af-id="${escapeHtml(af.id)}" style="align-items:center;">
     <input type="text" class="vf-texto" value="${escapeHtml(af.texto)}" placeholder="Afirmação" style="flex:1;">
-    <label style="width:auto;"><input type="radio" name="vf-gab-${af.id}" value="true" ${valorGabarito === true ? 'checked' : ''}> V</label>
-    <label style="width:auto;"><input type="radio" name="vf-gab-${af.id}" value="false" ${valorGabarito === false ? 'checked' : ''}> F</label>
+    <label style="width:auto;"><input type="radio" name="vf-gab-${escapeHtml(af.id)}" value="true" ${valorGabarito === true ? 'checked' : ''}> V</label>
+    <label style="width:auto;"><input type="radio" name="vf-gab-${escapeHtml(af.id)}" value="false" ${valorGabarito === false ? 'checked' : ''}> F</label>
   </div>`;
 }
 function _linhaItemSimples(grupo, item) {
-  return `<div class="linha-botoes" data-item-id="${item.id}"><input type="text" class="item-${grupo}-texto" value="${escapeHtml(item.texto)}" style="flex:1;"></div>`;
+  return `<div class="linha-botoes" data-item-id="${escapeHtml(item.id)}"><input type="text" class="item-${grupo}-texto" value="${escapeHtml(item.texto)}" style="flex:1;"></div>`;
 }
 function _gabaritoLacunasParaTexto(gabarito) {
   if (!gabarito) return '';
